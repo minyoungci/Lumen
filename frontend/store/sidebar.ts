@@ -24,6 +24,6 @@ export const useSidebarStore = create<SidebarStore>()(
       toggleCollapse: () => set((state) => ({ isCollapsed: !state.isCollapsed })),
       toggleActivity: () => set((state) => ({ isActivityOpen: !state.isActivityOpen })),
     }),
-    { name: "labbase-sidebar" }
+    { name: "lumen-sidebar" }
   )
 );

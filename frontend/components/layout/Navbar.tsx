@@ -66,7 +66,7 @@ export function Navbar() {
         {/* Logo */}
         <div className="flex items-center gap-2 text-text-primary">
           <div className="h-6 w-6 rounded bg-primary-500 flex-shrink-0" />
-          <span className="font-semibold hidden sm:block">LabBase</span>
+          <span className="font-semibold hidden sm:block">Lumen</span>
         </div>
 
         {/* Search */}

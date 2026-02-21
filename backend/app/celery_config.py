@@ -3,7 +3,7 @@ from app.config import settings
 
 def create_celery_app() -> Celery:
     celery_app = Celery(
-        "labbase",
+        "lumen",
         broker=settings.REDIS_URL,
         backend=settings.REDIS_URL,
         include=["app.tasks.daily_summary_task"]

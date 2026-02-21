@@ -24,3 +24,17 @@ api.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 );
+
+api.interceptors.request.use((config) => {
+  try {
+    const raw = localStorage.getItem("lumen-project");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const projectId = parsed?.state?.currentProjectId;
+      if (projectId) {
+        config.params = { project_id: projectId, ...config.params };
+      }
+    }
+  } catch {}
+  return config;
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { GlassCard } from "@/components/shared/GlassCard";
 import { RichTextEditor, TiptapContent } from "@/components/shared/RichTextEditor";
@@ -11,7 +11,7 @@ interface Column {
   name: string;
 }
 
-export default function NewSharedPostPage() {
+function NewSharedPostContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialType = searchParams.get("type") === "kanban" ? "kanban" : "article";
@@ -136,5 +136,13 @@ export default function NewSharedPostPage() {
         </form>
       </GlassCard>
     </div>
+  );
+}
+
+export default function NewSharedPostPage() {
+  return (
+    <Suspense>
+      <NewSharedPostContent />
+    </Suspense>
   );
 }

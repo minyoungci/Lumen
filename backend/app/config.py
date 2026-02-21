@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000"
     DEV_BYPASS_AUTH: bool = True
-    UPLOAD_DIR: str = "/var/lib/labbase/uploads"
+    UPLOAD_DIR: str = "/var/lib/lumen/uploads"
 
     @field_validator("DATABASE_URL", "ANTHROPIC_API_KEY", "SECRET_KEY")
     @classmethod

@@ -42,3 +42,5 @@ from app.models.schedule_attendee import ScheduleEventAttendee
 from app.models.upload import Upload
 from app.models.bookmark import Bookmark
 from app.models.kanban_column import KanbanColumn
+from app.models.project import Project
+from app.models.project_member import ProjectMember

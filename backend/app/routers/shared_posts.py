@@ -42,20 +42,32 @@ def list_shared_posts(
     search: Optional[str] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=500),
     cursor: Optional[str] = Query(default=None),
+    project_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
     q = db.query(SharedPost).filter(SharedPost.deleted_at.is_(None))
 
-    if mine:
-        q = q.filter(SharedPost.user_id == current_user.id)
+    if project_id is not None:
+        from app.models.project_member import ProjectMember
+        member = db.query(ProjectMember).filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == current_user.id,
+        ).first()
+        if not member:
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        q = q.filter(SharedPost.project_id == project_id)
     else:
-        q = q.filter(
-            or_(
-                SharedPost.visibility == "shared",
-                SharedPost.user_id == current_user.id,
+        q = q.filter(SharedPost.project_id.is_(None))
+        if mine:
+            q = q.filter(SharedPost.user_id == current_user.id)
+        else:
+            q = q.filter(
+                or_(
+                    SharedPost.visibility == "shared",
+                    SharedPost.user_id == current_user.id,
+                )
             )
-        )
 
     if type:
         q = q.filter(SharedPost.type == type)

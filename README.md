@@ -1,4 +1,4 @@
-# LabBase (LearnableCat)
+# Lumen (LearnableCat)
 
 Research knowledge base platform (Next.js + FastAPI + Postgres + Redis + Celery).
 
@@ -7,7 +7,7 @@ Research knowledge base platform (Next.js + FastAPI + Postgres + Redis + Celery)
 ### 1) Start
 
 ```bash
-cd D:/learnablecat/labbase
+cd D:/learnablecat/lumen
 bash scripts/option_a_up.sh
 ```
 

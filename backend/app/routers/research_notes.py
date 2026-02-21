@@ -41,17 +41,28 @@ def list_research_notes(
     search: Optional[str] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     cursor: Optional[str] = Query(default=None),
+    project_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
     q = db.query(ResearchNote).filter(ResearchNote.deleted_at.is_(None))
 
-    if scope == "mine":
-        q = q.filter(ResearchNote.user_id == current_user.id)
-    elif scope == "shared":
-        q = q.filter(ResearchNote.is_shared.is_(True))
+    if project_id is not None:
+        from app.models.project_member import ProjectMember
+        member = db.query(ProjectMember).filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == current_user.id,
+        ).first()
+        if not member:
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        q = q.filter(ResearchNote.project_id == project_id)
     else:
-        raise HTTPException(status_code=400, detail="scope must be mine or shared")
+        if scope == "mine":
+            q = q.filter(ResearchNote.user_id == current_user.id).filter(ResearchNote.project_id.is_(None))
+        elif scope == "shared":
+            q = q.filter(ResearchNote.is_shared.is_(True)).filter(ResearchNote.project_id.is_(None))
+        else:
+            raise HTTPException(status_code=400, detail="scope must be mine or shared")
 
     if search:
         pattern = f"%{search}%"

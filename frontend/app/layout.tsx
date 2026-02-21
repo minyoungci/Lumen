@@ -9,7 +9,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LabBase",
+  title: "Lumen",
   description: "Research Knowledge Base Platform",
 };
 

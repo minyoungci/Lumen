@@ -38,10 +38,24 @@ def list_daily_logs(
     to_date: Optional[date] = Query(default=None, alias="to"),
     limit: int = Query(default=30, ge=1, le=100),
     cursor: Optional[date] = Query(default=None),
+    project_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
     q = db.query(DailyLog).filter(DailyLog.user_id == current_user.id)
+
+    if project_id is not None:
+        from app.models.project_member import ProjectMember
+        member = db.query(ProjectMember).filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == current_user.id,
+        ).first()
+        if not member:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        q = q.filter(DailyLog.project_id == project_id)
+    else:
+        q = q.filter(DailyLog.project_id.is_(None))
 
     if from_date:
         q = q.filter(DailyLog.log_date >= from_date)
