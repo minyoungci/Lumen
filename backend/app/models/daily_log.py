@@ -7,9 +7,10 @@ from app.database import Base
 
 class DailyLog(Base):
     __tablename__ = "daily_logs"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("auth.users.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     log_date = Column(Date, nullable=False)
     content = Column(JSON, nullable=False, default={})
     word_count = Column(Integer, nullable=False, default=0)

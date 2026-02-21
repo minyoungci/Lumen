@@ -10,6 +10,7 @@ class SharedPost(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("auth.users.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     type = Column(String(20), nullable=False)
     title = Column(String(300), nullable=False)
     content = Column(JSON, nullable=False, default={})

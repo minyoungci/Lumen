@@ -10,7 +10,10 @@ import { supabase } from "@/lib/supabase";
 function SignUpForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirect");
+  const rawRedirect = searchParams.get("redirect");
+  const redirectTo = rawRedirect && rawRedirect.startsWith("/") && !rawRedirect.startsWith("//")
+    ? rawRedirect
+    : null;
 
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");

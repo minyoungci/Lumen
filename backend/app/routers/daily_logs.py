@@ -114,6 +114,7 @@ def get_daily_log(
 def upsert_daily_log(
     log_date: date,
     payload: DailyLogUpsert,
+    project_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
@@ -127,6 +128,7 @@ def upsert_daily_log(
         row = DailyLog(
             user_id=current_user.id,
             log_date=log_date,
+            project_id=project_id,
             content=payload.content,
             word_count=payload.word_count,
             status=payload.status,

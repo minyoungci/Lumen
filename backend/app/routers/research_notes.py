@@ -123,10 +123,11 @@ def get_research_note(
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 def create_research_note(
     payload: ResearchNoteCreate,
+    project_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
-    row = ResearchNote(user_id=current_user.id, **payload.model_dump())
+    row = ResearchNote(user_id=current_user.id, project_id=project_id, **payload.model_dump())
     try:
         db.add(row)
         db.commit()
