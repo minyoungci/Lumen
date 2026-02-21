@@ -1,0 +1,21 @@
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── IDE ──
+.idea/
+.vscode/
+*.swp
+
+# ── Secrets (절대 커밋 금지) ──
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ── Docker ──
+docker-compose.override.yml
+
+# ── Claude / omc session data ──
+.omc/

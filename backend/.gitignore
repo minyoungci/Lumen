@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# Env (secrets)
+.env
+.env.local
+
+# Uploads (local dev only)
+/uploads/
+/var/
+
+# Alembic
+# (migrations/ 은 커밋)
+
+# IDE
+.idea/
+.vscode/
