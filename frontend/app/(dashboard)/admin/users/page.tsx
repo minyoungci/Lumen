@@ -60,6 +60,25 @@ export default function AdminUsersPage() {
     }
   };
 
+  const handleToggleActive = async (userId: string, isActive: boolean) => {
+    const action = isActive ? "비활성화" : "활성화";
+    if (!confirm(`이 유저를 ${action}하시겠습니까?`)) return;
+    const key = `active-${userId}`;
+    setActionLoading(key);
+    try {
+      if (isActive) {
+        await api.delete(`/admin/users/${userId}`);
+      } else {
+        await api.patch(`/admin/users/${userId}/activate`);
+      }
+      await load();
+    } catch {
+      alert(`${action} 처리에 실패했습니다.`);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleRemoveMember = async (projectId: string, userId: string, projectName: string) => {
     if (!confirm(`"${projectName}" 프로젝트에서 이 멤버를 삭제하시겠습니까?`)) return;
     const key = `del-${projectId}-${userId}`;
@@ -113,6 +132,17 @@ export default function AdminUsersPage() {
                     className={`h-2 w-2 rounded-full flex-shrink-0 ${row.is_active ? "bg-green-400" : "bg-gray-300"}`}
                     title={row.is_active ? "활성" : "비활성"}
                   />
+                  <button
+                    onClick={() => void handleToggleActive(row.id, row.is_active)}
+                    disabled={actionLoading === `active-${row.id}`}
+                    className={`rounded px-2 py-0.5 text-xs disabled:opacity-50 transition-colors ${
+                      row.is_active
+                        ? "text-red-500 hover:bg-red-50"
+                        : "text-green-600 hover:bg-green-50"
+                    }`}
+                  >
+                    {actionLoading === `active-${row.id}` ? "..." : row.is_active ? "비활성화" : "활성화"}
+                  </button>
                   <button
                     onClick={() => toggleExpand(row.id)}
                     className="rounded-lg border border-black/10 bg-white/60 px-2.5 py-1 text-xs text-text-secondary hover:bg-white transition-colors"

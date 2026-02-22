@@ -239,3 +239,36 @@ def admin_remove_member(
         raise HTTPException(status_code=500, detail="Database error")
 
     return {"message": "Member removed"}
+
+
+@router.delete("/users/{user_id}", response_model=dict)
+def admin_deactivate_user(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    current: RequestUser = Depends(require_admin),
+):
+    if user_id == current.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate yourself")
+
+    user = db.query(UserProfile).filter(UserProfile.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.is_active = False
+    db.commit()
+    return {"message": "User deactivated"}
+
+
+@router.patch("/users/{user_id}/activate", response_model=dict)
+def admin_activate_user(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    _: RequestUser = Depends(require_admin),
+):
+    user = db.query(UserProfile).filter(UserProfile.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.is_active = True
+    db.commit()
+    return {"message": "User activated"}
