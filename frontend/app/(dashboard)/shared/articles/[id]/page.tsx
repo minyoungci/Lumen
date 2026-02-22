@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { motion, useScroll, useSpring } from "framer-motion";
+import { motion } from "framer-motion";
 import { GlassCard } from "@/components/shared/GlassCard";
 import { RichTextEditor, TiptapContent, textToTiptap } from "@/components/shared/RichTextEditor";
 import { api } from "@/lib/api";
@@ -15,10 +15,6 @@ function calcReadingTime(text: string): number {
 export default function SharedArticleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-
-  // Scroll progress bar
-  const { scrollYProgress } = useScroll();
-  const scaleX = useSpring(scrollYProgress, { stiffness: 100, damping: 30, restDelta: 0.001 });
 
   const [title, setTitle] = useState("");
   const [authorName, setAuthorName] = useState("");
@@ -106,14 +102,6 @@ export default function SharedArticleDetailPage() {
 
   return (
     <>
-      {/* ── Scroll progress bar (read mode only) ── */}
-      {viewMode === "read" && (
-        <motion.div
-          className="fixed left-0 right-0 top-14 z-50 h-[2px] origin-left bg-primary-500"
-          style={{ scaleX }}
-        />
-      )}
-
       <div className="mx-auto max-w-[720px] py-8">
         {viewMode === "read" ? (
           /* ── Article read view ── */

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LumenLogo } from "@/components/brand/LumenLogo";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
@@ -65,7 +66,7 @@ export function Navbar() {
 
         {/* Logo */}
         <div className="flex items-center gap-2 text-text-primary">
-          <div className="h-6 w-6 rounded bg-primary-500 flex-shrink-0" />
+          <LumenLogo size={24} />
           <span className="font-semibold hidden sm:block">Lumen</span>
         </div>
 

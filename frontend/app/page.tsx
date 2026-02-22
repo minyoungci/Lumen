@@ -99,6 +99,7 @@ export default function HomePage() {
               src="/logo.png"
               alt="Lumen"
               className="h-10 w-auto object-contain"
+              style={{ mixBlendMode: "screen" }}
             />
           </Link>
 
