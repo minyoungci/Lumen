@@ -22,6 +22,7 @@ def get_graph(
     content_type: Optional[str] = Query(default=None),
     user_id: Optional[UUID] = Query(default=None),
     tag: Optional[str] = Query(default=None),
+    project_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
@@ -38,6 +39,13 @@ def get_graph(
     if user_id:
         note_q = note_q.filter(ResearchNote.user_id == user_id)
         post_q = post_q.filter(SharedPost.user_id == user_id)
+
+    if project_id is not None:
+        note_q = note_q.filter(ResearchNote.project_id == project_id)
+        post_q = post_q.filter(SharedPost.project_id == project_id)
+    else:
+        note_q = note_q.filter(ResearchNote.project_id.is_(None))
+        post_q = post_q.filter(SharedPost.project_id.is_(None))
 
     # permission scope for notes: owner + shared
     note_q = note_q.filter((ResearchNote.user_id == current_user.id) | (ResearchNote.is_shared.is_(True)))

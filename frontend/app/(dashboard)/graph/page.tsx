@@ -5,6 +5,7 @@ import * as d3 from "d3";
 import { GlassCard } from "@/components/shared/GlassCard";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { api } from "@/lib/api";
+import { useProjectStore } from "@/store/project";
 
 interface GraphNode extends d3.SimulationNodeDatum {
   id: string;
@@ -40,6 +41,7 @@ function resolveId(d: string | GraphNode): string {
 export default function GraphPage() {
   const svgRef  = useRef<SVGSVGElement>(null);
   const simRef  = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
+  const { currentProjectId } = useProjectStore();
 
   const [rawNodes, setRawNodes] = useState<GraphNode[]>([]);
   const [rawEdges, setRawEdges] = useState<GraphLink[]>([]);
@@ -54,7 +56,8 @@ export default function GraphPage() {
   /* ── Load data ─────────────────────────────────────────── */
   useEffect(() => {
     let alive = true;
-    api.get("/graph")
+    setLoading(true);
+    api.get("/graph", { params: { project_id: currentProjectId ?? undefined } })
       .then((res) => {
         if (!alive) return;
         setRawNodes(res.data?.data?.nodes ?? []);
@@ -63,7 +66,7 @@ export default function GraphPage() {
       .catch(() => {})
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [currentProjectId]);
 
   /* ── Build / rebuild D3 graph ──────────────────────────── */
   useEffect(() => {

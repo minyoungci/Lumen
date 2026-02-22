@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta
+from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import RequestUser, require_admin
 from app.models.comment import Comment
+from app.models.project import Project
+from app.models.project_member import ProjectMember
 from app.models.research_note import ResearchNote
 from app.models.shared_post import SharedPost
 from app.models.tag import Tag
 from app.models.upload import Upload
 from app.models.user import UserProfile
+
+
+class MemberRoleUpdate(BaseModel):
+    role: str  # "owner" | "member"
 
 router = APIRouter()
 
@@ -146,3 +155,87 @@ def get_storage_breakdown(
         )
 
     return {"data": data}
+
+
+@router.get("/users", response_model=dict)
+def list_users_admin(
+    db: Session = Depends(get_db),
+    _: RequestUser = Depends(require_admin),
+):
+    users = db.query(UserProfile).order_by(UserProfile.display_name.asc()).all()
+
+    memberships = db.query(ProjectMember).all()
+    project_ids = {m.project_id for m in memberships}
+    projects = db.query(Project).filter(Project.id.in_(project_ids)).all() if project_ids else []
+    project_map = {p.id: p.name for p in projects}
+
+    user_memberships: dict = defaultdict(list)
+    for m in memberships:
+        user_memberships[m.user_id].append({
+            "project_id": str(m.project_id),
+            "project_name": project_map.get(m.project_id, "Unknown"),
+            "role": m.role,
+            "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+        })
+
+    data = []
+    for user in users:
+        data.append({
+            "id": str(user.id),
+            "display_name": user.display_name,
+            "avatar_url": user.avatar_url,
+            "role": user.role,
+            "is_active": user.is_active,
+            "projects": user_memberships.get(user.id, []),
+        })
+
+    return {"data": data}
+
+
+@router.patch("/projects/{project_id}/members/{user_id}", response_model=dict)
+def admin_update_member_role(
+    project_id: UUID,
+    user_id: UUID,
+    payload: MemberRoleUpdate,
+    db: Session = Depends(get_db),
+    _: RequestUser = Depends(require_admin),
+):
+    if payload.role not in ("owner", "member"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Role must be 'owner' or 'member'")
+
+    member = (
+        db.query(ProjectMember)
+        .filter(ProjectMember.project_id == project_id, ProjectMember.user_id == user_id)
+        .first()
+    )
+    if not member:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+
+    member.role = payload.role
+    db.commit()
+    return {"message": "Role updated"}
+
+
+@router.delete("/projects/{project_id}/members/{user_id}", response_model=dict)
+def admin_remove_member(
+    project_id: UUID,
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    _: RequestUser = Depends(require_admin),
+):
+    member = (
+        db.query(ProjectMember)
+        .filter(ProjectMember.project_id == project_id, ProjectMember.user_id == user_id)
+        .first()
+    )
+    if not member:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+
+    try:
+        db.delete(member)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
+
+    return {"message": "Member removed"}
