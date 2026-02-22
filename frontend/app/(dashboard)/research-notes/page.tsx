@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { GlassCard } from "@/components/shared/GlassCard";
 import { api } from "@/lib/api";
+import { useProjectStore } from "@/store/project";
 
 interface NoteRow {
   id: string;
@@ -17,6 +18,7 @@ interface NoteRow {
 }
 
 export default function ResearchNotesPage() {
+  const { currentProjectId } = useProjectStore();
   const [rows, setRows] = useState<NoteRow[]>([]);
   const [scope, setScope] = useState<"mine" | "shared">("mine");
   const [search, setSearch] = useState("");
@@ -32,6 +34,7 @@ export default function ResearchNotesPage() {
             scope,
             search: search.trim() || undefined,
             limit: 50,
+            project_id: currentProjectId ?? undefined,
           },
         });
         if (mounted) setRows(res.data?.data ?? []);
@@ -46,7 +49,7 @@ export default function ResearchNotesPage() {
       mounted = false;
       clearTimeout(timer);
     };
-  }, [scope, search]);
+  }, [scope, search, currentProjectId]);
 
   return (
     <div className="space-y-5">
@@ -87,7 +90,7 @@ export default function ResearchNotesPage() {
         <div className="text-sm text-white/60">불러오는 중...</div>
       ) : rows.length === 0 ? (
         <GlassCard>
-          <p className="text-sm text-white/60">노트가 없습니다. 새 노트를 만들어보세요.</p>
+          <p className="text-sm text-white/60">{currentProjectId ? "이 프로젝트에 아직 노트가 없습니다." : "Personal Space에 노트가 없습니다."}</p>
         </GlassCard>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">

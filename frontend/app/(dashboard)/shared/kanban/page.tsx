@@ -6,6 +6,7 @@ import { GlassCard } from "@/components/shared/GlassCard";
 import { CardSkeleton } from "@/components/ui/Skeleton";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/store/project";
 
 interface Column {
   id: string;
@@ -126,6 +127,7 @@ function TopicSelector({
 }
 
 export default function InsightFeedPage() {
+  const { currentProjectId } = useProjectStore();
   const [columns, setColumns] = useState<Column[]>([]);
   const [posts, setPosts] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,9 +149,10 @@ export default function InsightFeedPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const projectParam = { project_id: currentProjectId ?? undefined };
       const [colRes, postRes, meRes] = await Promise.allSettled([
-        api.get("/kanban/columns"),
-        api.get("/shared-posts", { params: { limit: 100 } }),
+        api.get("/kanban/columns", { params: projectParam }),
+        api.get("/shared-posts", { params: { limit: 100, ...projectParam } }),
         api.get("/users/me"),
       ]);
 
@@ -170,7 +173,7 @@ export default function InsightFeedPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentProjectId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -183,14 +186,18 @@ export default function InsightFeedPage() {
     if (!draft.trim() || posting) return;
     setPosting(true);
     try {
-      await api.post("/shared-posts", {
-        type: "insight",
-        title: draft.slice(0, 100),
-        content: { text: draft },
-        kanban_column: topic || null,
-        word_count: draft.trim().split(/\s+/).filter(Boolean).length,
-        visibility: "shared",
-      });
+      await api.post(
+        "/shared-posts",
+        {
+          type: "insight",
+          title: draft.slice(0, 100),
+          content: { text: draft },
+          kanban_column: topic || null,
+          word_count: draft.trim().split(/\s+/).filter(Boolean).length,
+          visibility: "shared",
+        },
+        { params: { project_id: currentProjectId ?? undefined } },
+      );
       setDraft("");
       setTopic("");
       await load();
@@ -215,7 +222,11 @@ export default function InsightFeedPage() {
     if (!newColName.trim()) return;
     setAddingCol(true);
     try {
-      await api.post("/kanban/columns", { name: newColName.trim(), color: newColColor });
+      await api.post(
+        "/kanban/columns",
+        { name: newColName.trim(), color: newColColor },
+        { params: { project_id: currentProjectId ?? undefined } },
+      );
       setNewColName("");
       await load();
     } finally {
@@ -417,7 +428,7 @@ export default function InsightFeedPage() {
           <CardSkeleton />
         ) : filteredPosts.length === 0 ? (
           <div className="py-16 text-center">
-            <p className="text-text-muted text-sm">아직 공유된 인사이트가 없습니다.</p>
+            <p className="text-text-muted text-sm">{currentProjectId ? "이 프로젝트에 아직 공유된 인사이트가 없습니다." : "Personal Space에 아직 공유된 인사이트가 없습니다."}</p>
             <p className="text-text-muted/60 text-xs mt-1">위 입력창에서 첫 번째 인사이트를 공유해보세요!</p>
           </div>
         ) : (

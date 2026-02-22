@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { GlassCard } from "@/components/shared/GlassCard";
 import { api } from "@/lib/api";
+import { useProjectStore } from "@/store/project";
 
 interface SharedArticle {
   id: string;
@@ -14,20 +15,23 @@ interface SharedArticle {
 }
 
 export default function SharedArticlesPage() {
+  const { currentProjectId } = useProjectStore();
   const [rows, setRows] = useState<SharedArticle[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get("/shared-posts", { params: { type: "article", limit: 100 } });
+      const res = await api.get("/shared-posts", {
+        params: { type: "article", limit: 100, project_id: currentProjectId ?? undefined },
+      });
       setRows(res.data?.data ?? []);
     } catch {
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentProjectId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -58,7 +62,7 @@ export default function SharedArticlesPage() {
       {loading ? (
         <p className="text-sm text-text-muted">불러오는 중...</p>
       ) : rows.length === 0 ? (
-        <GlassCard><p className="text-sm text-text-muted">아티클이 없습니다.</p></GlassCard>
+        <GlassCard><p className="text-sm text-text-muted">{currentProjectId ? "이 프로젝트에 아직 아티클이 없습니다." : "Personal Space에 아티클이 없습니다."}</p></GlassCard>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {rows.map((row) => (
