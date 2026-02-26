@@ -42,6 +42,7 @@ services:
         condition: service_started
     volumes:
       - ./backend:/app
+      - uploads_data:/var/lib/lumen/uploads
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
@@ -73,6 +74,7 @@ services:
 
   frontend:
     build: ./frontend
+    user: root
     ports:
       - "3100:3000"
     environment:
@@ -85,6 +87,8 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - /app/.next
+    command: sh -c "npm run build && npm start"
 
   nginx:
     image: nginx:alpine
@@ -98,3 +102,4 @@ services:
 
 volumes:
   postgres_data:
+  uploads_data:

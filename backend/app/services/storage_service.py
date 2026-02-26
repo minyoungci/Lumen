@@ -195,17 +195,18 @@ class StorageService:
             parsed = urlparse(canonical)
             path = parsed.path or canonical
             if path.startswith("/uploads/files/"):
-                return self._resolve_local_upload_url(canonical)
+                return self._resolve_local_upload_url(canonical, expires_in=expires_in)
             return canonical
 
         object_path = canonical.removeprefix(SUPABASE_UPLOAD_URI_PREFIX)
         signed = self._create_signed_url(object_path=object_path, expires_in=expires_in)
         return signed or canonical
 
-    def _resolve_local_upload_url(self, value: str) -> Optional[str]:
+    def _resolve_local_upload_url(self, value: str, expires_in: int = DEFAULT_SIGNED_URL_EXPIRES) -> Optional[str]:
         """Return local upload URL only when the target file exists.
 
-        Prevents stale avatar/image URLs from repeatedly returning 404 in UI.
+        If local file is missing, try resolving the same object path from Supabase
+        to recover legacy rows that still point to `/uploads/files/...`.
         """
         cleaned = value.strip()
         if not cleaned:
@@ -223,6 +224,9 @@ class StorageService:
 
         local_path = LOCAL_UPLOAD_ROOT / relative
         if not local_path.exists():
+            signed = self._create_signed_url(object_path=relative, expires_in=expires_in)
+            if signed:
+                return signed
             return None
 
         # Keep original path/query if provided.
@@ -242,14 +246,6 @@ class StorageService:
         try:
             payload = client.storage.from_(SUPABASE_BUCKET).create_signed_url(object_path, expires_in)
             signed = self._extract_url(payload, ("signedURL", "signedUrl", "signed_url", "url"))
-            if signed:
-                return signed
-        except Exception:
-            pass
-
-        try:
-            payload = client.storage.from_(SUPABASE_BUCKET).get_public_url(object_path)
-            signed = self._extract_url(payload, ("publicURL", "publicUrl", "public_url", "url"))
             if signed:
                 return signed
         except Exception:
