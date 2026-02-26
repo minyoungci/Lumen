@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     DEV_BYPASS_AUTH: bool = False
     ADMIN_EMAIL_ALLOWLIST: str = "dbssus123@gmail.com"
     UPLOAD_DIR: str = "/var/lib/lumen/uploads"
+    SUPABASE_STORAGE_BUCKET: str = "uploads"
 
     BILLING_ENABLED: bool = False
     BILLING_PROVIDER: str = "manual"

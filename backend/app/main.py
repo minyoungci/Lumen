@@ -104,11 +104,7 @@ async def readiness_check(response: Response):
     except Exception:
         checks["redis"] = False
 
-    # In dev bypass mode, local filesystem upload fallback is acceptable.
-    if settings.DEV_BYPASS_AUTH:
-        checks["storage"] = True
-    else:
-        checks["storage"] = storage_service.supabase is not None
+    checks["storage"] = storage_service.is_storage_ready()
 
     ready = all(checks.values())
     if not ready:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -11,11 +12,13 @@ from uuid import UUID
 from app.config import settings
 
 LOCAL_UPLOAD_ROOT = Path(settings.UPLOAD_DIR)
-SUPABASE_UPLOAD_URI_PREFIX = "supabase://uploads/"
-SUPABASE_SIGNED_PATH_PREFIX = "/storage/v1/object/sign/uploads/"
-SUPABASE_PUBLIC_PATH_PREFIX = "/storage/v1/object/public/uploads/"
-SUPABASE_AUTHENTICATED_PATH_PREFIX = "/storage/v1/object/authenticated/uploads/"
+SUPABASE_BUCKET = (settings.SUPABASE_STORAGE_BUCKET or "uploads").strip() or "uploads"
+SUPABASE_UPLOAD_URI_PREFIX = f"supabase://{SUPABASE_BUCKET}/"
+SUPABASE_SIGNED_PATH_PREFIX = f"/storage/v1/object/sign/{SUPABASE_BUCKET}/"
+SUPABASE_PUBLIC_PATH_PREFIX = f"/storage/v1/object/public/{SUPABASE_BUCKET}/"
+SUPABASE_AUTHENTICATED_PATH_PREFIX = f"/storage/v1/object/authenticated/{SUPABASE_BUCKET}/"
 DEFAULT_SIGNED_URL_EXPIRES = 60 * 60 * 24 * 7
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,6 +30,7 @@ class StoredObject:
 class StorageService:
     def __init__(self) -> None:
         self._supabase = None
+        self._bucket_ready = False
 
     @property
     def supabase(self):
@@ -47,6 +51,59 @@ class StorageService:
         except Exception:
             return None
 
+    def is_storage_ready(self) -> bool:
+        if settings.DEV_BYPASS_AUTH:
+            return True
+        if self.supabase is None:
+            return False
+        return self._ensure_bucket_ready()
+
+    def _ensure_bucket_ready(self, force_refresh: bool = False) -> bool:
+        if self._bucket_ready and not force_refresh:
+            return True
+
+        client = self.supabase
+        if client is None:
+            return False
+
+        try:
+            buckets = client.storage.list_buckets() or []
+            for bucket in buckets:
+                if isinstance(bucket, dict) and bucket.get("id") == SUPABASE_BUCKET:
+                    self._bucket_ready = True
+                    return True
+        except Exception as exc:
+            logger.warning("Failed to list Supabase buckets: %s", exc)
+
+        try:
+            client.storage.create_bucket(
+                SUPABASE_BUCKET,
+                options={"public": False},
+            )
+            self._bucket_ready = True
+            return True
+        except Exception as exc:
+            message = str(exc).lower()
+            if "already exists" in message or "duplicate" in message:
+                self._bucket_ready = True
+                return True
+            logger.warning("Failed to ensure Supabase bucket '%s': %s", SUPABASE_BUCKET, exc)
+            return False
+
+    def _is_bucket_missing(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "bucket not found" in message or "bucket does not exist" in message
+
+    def _upload_to_supabase(self, object_path: str, content: bytes, content_type: str) -> None:
+        client = self.supabase
+        if client is None:
+            raise RuntimeError("Supabase storage client is not available")
+        client.storage.from_(SUPABASE_BUCKET).upload(
+            path=object_path,
+            file=content,
+            file_options={"content-type": content_type, "upsert": "false"},
+        )
+
     def upload_user_upload(
         self,
         user_id: UUID,
@@ -61,21 +118,34 @@ class StorageService:
         # Try Supabase storage first.
         client = self.supabase
         if client is not None:
-            try:
-                client.storage.from_("uploads").upload(
-                    path=object_path,
-                    file=content,
-                    file_options={"content-type": content_type, "upsert": "false"},
-                )
-                # uploads bucket is private by design; store canonical URI
-                uri = f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
-                return StoredObject(storage_path=uri, public_url=uri)
-            except Exception as exc:
-                # In production mode, fail fast when remote storage is unavailable.
+            if not self._ensure_bucket_ready():
                 if not settings.DEV_BYPASS_AUTH:
-                    raise RuntimeError("Supabase storage upload failed") from exc
-                # fallback to local storage in dev environments
-                pass
+                    raise RuntimeError("Supabase storage bucket is not available")
+            else:
+                try:
+                    self._upload_to_supabase(
+                        object_path=object_path,
+                        content=content,
+                        content_type=content_type,
+                    )
+                    uri = f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
+                    return StoredObject(storage_path=uri, public_url=uri)
+                except Exception as exc:
+                    if self._is_bucket_missing(exc) and self._ensure_bucket_ready(force_refresh=True):
+                        try:
+                            self._upload_to_supabase(
+                                object_path=object_path,
+                                content=content,
+                                content_type=content_type,
+                            )
+                            uri = f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
+                            return StoredObject(storage_path=uri, public_url=uri)
+                        except Exception as retry_exc:
+                            exc = retry_exc
+                    if not settings.DEV_BYPASS_AUTH:
+                        raise RuntimeError(f"Supabase storage upload failed: {exc}") from exc
+                    # fallback to local storage in dev environments
+            logger.warning("Falling back to local storage upload (dev mode)")
         elif not settings.DEV_BYPASS_AUTH:
             raise RuntimeError("Supabase storage is not configured")
 
@@ -170,7 +240,7 @@ class StorageService:
             return None
 
         try:
-            payload = client.storage.from_("uploads").create_signed_url(object_path, expires_in)
+            payload = client.storage.from_(SUPABASE_BUCKET).create_signed_url(object_path, expires_in)
             signed = self._extract_url(payload, ("signedURL", "signedUrl", "signed_url", "url"))
             if signed:
                 return signed
@@ -178,7 +248,7 @@ class StorageService:
             pass
 
         try:
-            payload = client.storage.from_("uploads").get_public_url(object_path)
+            payload = client.storage.from_(SUPABASE_BUCKET).get_public_url(object_path)
             signed = self._extract_url(payload, ("publicURL", "publicUrl", "public_url", "url"))
             if signed:
                 return signed
@@ -230,7 +300,7 @@ class StorageService:
 
             object_path = storage_path.removeprefix(SUPABASE_UPLOAD_URI_PREFIX)
             try:
-                client.storage.from_("uploads").remove([object_path])
+                client.storage.from_(SUPABASE_BUCKET).remove([object_path])
             except Exception:
                 return
             return
