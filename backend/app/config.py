@@ -10,8 +10,15 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
     SECRET_KEY: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000"
-    DEV_BYPASS_AUTH: bool = True
+    DEV_BYPASS_AUTH: bool = False
+    ADMIN_EMAIL_ALLOWLIST: str = "dbssus123@gmail.com"
     UPLOAD_DIR: str = "/var/lib/lumen/uploads"
+
+    BILLING_ENABLED: bool = False
+    BILLING_PROVIDER: str = "manual"
+    CHECKOUT_URL_PRO: str = ""
+    CHECKOUT_URL_TEAM: str = ""
+    CONTACT_SALES_EMAIL: str = "sales@labbase.ai"
 
     @field_validator("DATABASE_URL", "ANTHROPIC_API_KEY", "SECRET_KEY")
     @classmethod

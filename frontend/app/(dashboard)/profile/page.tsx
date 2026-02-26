@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/shared/GlassCard";
 import { ListSkeleton } from "@/components/ui/Skeleton";
 import { api } from "@/lib/api";
+import { avatarGradient, hexToRgba, resolveMemberColor } from "@/lib/memberColor";
 
 type TabId = "edit" | "posts" | "logs";
 
@@ -15,6 +16,15 @@ interface MeRow {
   display_name: string;
   avatar_url?: string;
   bio?: string;
+  member_color?: string;
+  preferences?: {
+    status_message?: string;
+    pronouns?: string;
+    banner_text?: string;
+    member_color?: string;
+    accent_color?: string;
+    profile_theme?: string;
+  };
   role: "admin" | "member";
   created_at?: string;
   stats: {
@@ -36,6 +46,7 @@ interface SharedPostRow {
 interface DailyLogRow {
   id: string;
   log_date: string;
+  title?: string;
   word_count: number;
   preview: string;
   status?: string;
@@ -60,6 +71,46 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 const BIO_MAX = 200;
+const MAX_AVATAR_SIZE_BYTES = 40 * 1024 * 1024;
+
+function isPayloadTooLarge(error: unknown, detail: string | null): boolean {
+  const status = (error as { response?: { status?: number } })?.response?.status;
+  if (status === 413) return true;
+
+  const message = (error as { message?: string })?.message ?? "";
+  const normalized = `${detail ?? ""} ${message}`.toLowerCase();
+  return (
+    normalized.includes("413") ||
+    normalized.includes("too large") ||
+    normalized.includes("entity too large") ||
+    normalized.includes("request body")
+  );
+}
+
+function extractErrorDetail(error: unknown): string | null {
+  const response = (error as { response?: { data?: unknown } })?.response;
+  if (!response) return null;
+
+  const data = response.data;
+  if (typeof data === "string") {
+    const trimmed = data.trim();
+    if (!trimmed) return null;
+    return trimmed.length > 160 ? `${trimmed.slice(0, 160)}...` : trimmed;
+  }
+
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    if (typeof record.detail === "string") return record.detail;
+    if (typeof record.message === "string") return record.message;
+    if (Array.isArray(record.detail)) {
+      const first = record.detail[0];
+      if (first && typeof first === "object" && typeof (first as Record<string, unknown>).msg === "string") {
+        return (first as Record<string, unknown>).msg as string;
+      }
+    }
+  }
+  return null;
+}
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -71,8 +122,14 @@ export default function ProfilePage() {
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
+  const [memberColor, setMemberColor] = useState("#4f46e5");
+  const [accentColor, setAccentColor] = useState("#4f46e5");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [pronouns, setPronouns] = useState("");
+  const [bannerText, setBannerText] = useState("");
   const [saving, setSaving] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
 
   // Posts tab state
   const [posts, setPosts] = useState<SharedPostRow[]>([]);
@@ -103,6 +160,12 @@ export default function ProfilePage() {
         setDisplayName(row.display_name || "");
         setBio(row.bio || "");
         setAvatarUrl(row.avatar_url || "");
+        const resolvedColor = resolveMemberColor(row.id, row.preferences?.member_color ?? row.member_color);
+        setMemberColor(resolvedColor);
+        setAccentColor(row.preferences?.accent_color || resolvedColor);
+        setStatusMessage(row.preferences?.status_message || "");
+        setPronouns(row.preferences?.pronouns || "");
+        setBannerText(row.preferences?.banner_text || "");
       } catch {
         // network / server error — !me fallback UI handles display
       } finally {
@@ -148,16 +211,41 @@ export default function ProfilePage() {
   }, [activeTab]);
 
   const handleAvatarUpload = async (file: File) => {
+    setAvatarError(null);
+
+    if (file.size > MAX_AVATAR_SIZE_BYTES) {
+      setAvatarError("프로필 사진 용량이 너무 큽니다. 40MB 이하 파일만 업로드할 수 있습니다.");
+      return;
+    }
+
     setAvatarUploading(true);
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("file_type", "image");
-      const res = await api.post("/uploads", form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      const url = res.data?.public_url ?? res.data?.data?.public_url;
-      if (url) setAvatarUrl(url);
+      const res = await api.post("/users/me/avatar", form, { timeout: 180000 });
+      const row: MeRow | null = res.data?.data ?? null;
+      const url = row?.avatar_url ?? "";
+      if (!row || !url) {
+        setAvatarError("업로드는 완료됐지만 프로필 정보를 갱신하지 못했습니다.");
+        return;
+      }
+      setMe(row);
+      setAvatarUrl(url);
+      const resolvedColor = resolveMemberColor(row.id, row.preferences?.member_color ?? row.member_color);
+      setMemberColor(resolvedColor);
+      setAccentColor(row.preferences?.accent_color || resolvedColor);
+      setStatusMessage(row.preferences?.status_message || "");
+      setPronouns(row.preferences?.pronouns || "");
+      setBannerText(row.preferences?.banner_text || "");
+    } catch (error) {
+      const detail = extractErrorDetail(error);
+      if (isPayloadTooLarge(error, detail)) {
+        setAvatarError("프로필 사진 용량이 너무 큽니다. 40MB 이하로 줄여서 다시 업로드해주세요.");
+        return;
+      }
+      setAvatarError(
+        detail ? `프로필 사진 업로드 실패: ${detail}` : "프로필 사진 업로드에 실패했습니다."
+      );
     } finally {
       setAvatarUploading(false);
     }
@@ -171,8 +259,24 @@ export default function ProfilePage() {
         display_name: displayName,
         bio,
         avatar_url: avatarUrl || null,
+        preferences: {
+          status_message: statusMessage,
+          pronouns,
+          banner_text: bannerText,
+          member_color: memberColor,
+          accent_color: accentColor,
+        },
       });
-      setMe(res.data?.data ?? me);
+      const row: MeRow | null = res.data?.data ?? null;
+      if (row) {
+        setMe(row);
+        const resolvedColor = resolveMemberColor(row.id, row.preferences?.member_color ?? row.member_color);
+        setMemberColor(resolvedColor);
+        setAccentColor(row.preferences?.accent_color || resolvedColor);
+        setStatusMessage(row.preferences?.status_message || "");
+        setPronouns(row.preferences?.pronouns || "");
+        setBannerText(row.preferences?.banner_text || "");
+      }
     } finally {
       setSaving(false);
     }
@@ -207,15 +311,30 @@ export default function ProfilePage() {
   ];
 
   const stats = me.stats ?? { posts_count: 0, notes_count: 0, bookmarks_count: 0 };
+  const resolvedMemberColor = resolveMemberColor(me.id, memberColor || me.member_color);
+  const resolvedAccentColor = accentColor || resolvedMemberColor;
+  const statusLine = statusMessage.trim() || "상태 메시지를 설정해보세요";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       {/* ── Profile Card ── */}
       <GlassCard>
+        <div
+          className="mb-4 rounded-xl px-3 py-2 text-sm font-medium"
+          style={{
+            backgroundColor: hexToRgba(resolvedAccentColor, 0.16),
+            color: resolvedAccentColor,
+          }}
+        >
+          {bannerText.trim() || "내 프로필을 자유롭게 꾸며보세요"}
+        </div>
         <div className="flex items-center gap-4">
           {/* Avatar */}
           <div className="relative shrink-0">
-            <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-primary-500 text-lg font-bold text-white">
+            <div
+              className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full text-lg font-bold text-white"
+              style={{ background: avatarGradient(resolvedMemberColor) }}
+            >
               {avatarUrl ? (
                 <img src={avatarUrl} alt={me.display_name} className="h-full w-full object-cover" />
               ) : (
@@ -239,6 +358,10 @@ export default function ProfilePage() {
             {joinedDate && (
               <p className="mt-0.5 text-xs text-text-muted">가입일: {joinedDate}</p>
             )}
+            <p className="mt-1 text-xs text-text-muted">
+              {statusLine}
+              {pronouns.trim() ? ` · ${pronouns.trim()}` : ""}
+            </p>
           </div>
         </div>
 
@@ -286,7 +409,8 @@ export default function ProfilePage() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={avatarUploading}
-                className="group relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-primary-500 text-xl font-bold text-white transition-all focus:outline-none"
+                className="group relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full text-xl font-bold text-white transition-all focus:outline-none"
+                style={{ background: avatarGradient(resolvedMemberColor) }}
               >
                 {avatarUploading ? (
                   <span className="animate-spin text-lg">⟳</span>
@@ -306,7 +430,10 @@ export default function ProfilePage() {
                   </>
                 )}
               </button>
-              <p className="text-xs text-text-muted">클릭하여 프로필 사진 변경</p>
+              <p className="text-xs text-text-muted">클릭하여 프로필 사진 변경 (최대 40MB)</p>
+              {avatarError && (
+                <p className="text-center text-xs font-medium text-red-500">{avatarError}</p>
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -352,6 +479,61 @@ export default function ProfilePage() {
                 maxLength={BIO_MAX}
                 onChange={(e) => setBio(e.target.value)}
               />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-muted">멤버 컬러</label>
+                <input
+                  type="color"
+                  value={resolvedMemberColor}
+                  onChange={(e) => setMemberColor(e.target.value)}
+                  className="h-10 w-full cursor-pointer rounded-lg border border-black/10 bg-white/80 px-1"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-muted">Accent 컬러</label>
+                <input
+                  type="color"
+                  value={resolvedAccentColor}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  className="h-10 w-full cursor-pointer rounded-lg border border-black/10 bg-white/80 px-1"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-text-muted">상태 메시지</label>
+              <input
+                className="input w-full"
+                value={statusMessage}
+                maxLength={80}
+                onChange={(e) => setStatusMessage(e.target.value)}
+                placeholder="집중 모드, 회의중, 실험중 등"
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-muted">Pronouns</label>
+                <input
+                  className="input w-full"
+                  value={pronouns}
+                  maxLength={40}
+                  onChange={(e) => setPronouns(e.target.value)}
+                  placeholder="she/her, he/him, they/them"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-muted">배너 문구</label>
+                <input
+                  className="input w-full"
+                  value={bannerText}
+                  maxLength={120}
+                  onChange={(e) => setBannerText(e.target.value)}
+                  placeholder="내 연구 한줄소개"
+                />
+              </div>
             </div>
 
             <button
@@ -419,8 +601,13 @@ export default function ProfilePage() {
             logs.map((log) => (
               <Link key={log.id} href={`/daily-log/${log.log_date}`}>
                 <GlassCard variant="interactive">
-                  <div className="flex items-center justify-between">
-                    <p className="font-semibold text-text-primary">{log.log_date}</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-text-primary">
+                        {log.title?.trim() || `${log.log_date} 연구 로그`}
+                      </p>
+                      <p className="mt-0.5 text-xs text-text-muted">{log.log_date}</p>
+                    </div>
                     <div className="flex items-center gap-2">
                       {log.status && (
                         <span
@@ -435,7 +622,7 @@ export default function ProfilePage() {
                     </div>
                   </div>
                   {log.preview && (
-                    <p className="mt-2 line-clamp-2 text-sm text-text-muted">{log.preview}</p>
+                    <p className="mt-2 line-clamp-3 text-sm text-text-muted">{log.preview}</p>
                   )}
                 </GlassCard>
               </Link>

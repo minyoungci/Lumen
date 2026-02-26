@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models.user import UserProfile
+from app.utils.security import is_admin_email
 
 
 @dataclass
@@ -79,8 +80,12 @@ def _resolve_supabase_user(token: str, db: Session) -> Optional[RequestUser]:
     user_meta = data.get("user_metadata") or {}
     email = data.get("email")
 
-    requested_role = app_meta.get("role") or user_meta.get("role") or "member"
-    role = requested_role if requested_role in {"admin", "member"} else "member"
+    app_role = app_meta.get("role")
+    role = app_role if app_role in {"admin", "member"} else "member"
+    if is_admin_email(email):
+        role = "admin"
+    elif role == "admin":
+        role = "member"
 
     display_name = (
         user_meta.get("display_name")
@@ -100,6 +105,13 @@ def _resolve_supabase_user(token: str, db: Session) -> Optional[RequestUser]:
             db.add(user)
             db.commit()
             db.refresh(user)
+        else:
+            # Keep profile role aligned with trusted auth app_metadata.
+            if role in {"admin", "member"} and user.role != role:
+                user.role = role
+                db.add(user)
+                db.commit()
+                db.refresh(user)
 
         if not user.is_active:
             raise HTTPException(
@@ -131,7 +143,6 @@ def get_current_user(
 
     Dev path (DEV_BYPASS_AUTH=true):
     - Accepts X-User-Id or Bearer <uuid>/dev:<uuid>
-    - Falls back to first active user profile
     - If a non-UUID Bearer token is provided, tries Supabase verification first
     """
 
@@ -158,8 +169,10 @@ def get_current_user(
     if bearer_token and _parse_bearer_uuid(authorization) is None:
         resolved = _resolve_supabase_user(bearer_token, db)
         if resolved is not None:
-            if x_user_role in {"admin", "member"}:
+            if x_user_role == "member":
                 resolved.role = x_user_role
+            elif x_user_role == "admin" and resolved.role == "admin":
+                resolved.role = "admin"
             return resolved
 
     user_uuid: Optional[UUID] = None
@@ -176,25 +189,24 @@ def get_current_user(
     if user_uuid is None:
         user_uuid = _parse_bearer_uuid(authorization)
 
-    user: Optional[UserProfile] = None
-    if user_uuid:
-        user = db.query(UserProfile).filter(UserProfile.id == user_uuid).first()
-
-    if user is None:
-        user = (
-            db.query(UserProfile)
-            .filter(UserProfile.is_active.is_(True))
-            .order_by(UserProfile.created_at.asc())
-            .first()
-        )
-
-    if user is None:
+    if user_uuid is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No user context found. Set X-User-Id header or create a user profile.",
+            detail="No user context found. Set X-User-Id or use Bearer dev:<uuid>.",
         )
 
-    role = x_user_role if x_user_role in {"admin", "member"} else (user.role or "member")
+    user = db.query(UserProfile).filter(UserProfile.id == user_uuid).first()
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or inactive dev user context.",
+        )
+
+    role = user.role or "member"
+    if x_user_role == "member":
+        role = "member"
+    elif x_user_role == "admin" and role == "admin":
+        role = "admin"
     return RequestUser(id=user.id, role=role)
 
 
