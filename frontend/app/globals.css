@@ -284,6 +284,63 @@
   margin: 1rem 0;
 }
 
+/* Image node */
+.tiptap-content .ProseMirror img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.9rem 0;
+  border-radius: 10px;
+}
+.tiptap-wrapper:not(.tiptap-readonly) .tiptap-content .ProseMirror img {
+  cursor: pointer;
+}
+.tiptap-content .ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid rgba(0, 113, 227, 0.8);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.2);
+}
+
+/* Table */
+.tiptap-content .ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 1rem 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.tiptap-content .ProseMirror th,
+.tiptap-content .ProseMirror td {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  padding: 0.55rem 0.7rem;
+  vertical-align: top;
+  text-align: left;
+}
+.tiptap-content .ProseMirror th {
+  background: rgba(0, 0, 0, 0.04);
+  font-weight: 650;
+}
+.tiptap-content .ProseMirror .selectedCell {
+  position: relative;
+}
+.tiptap-content .ProseMirror .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(0, 113, 227, 0.65);
+  pointer-events: none;
+}
+.tiptap-content .ProseMirror .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: rgba(0, 113, 227, 0.45);
+  pointer-events: none;
+}
+
 /* Highlight */
 .tiptap-content .ProseMirror mark {
   background: rgba(250, 204, 21, 0.35);
@@ -543,20 +600,243 @@
 }
 
 /* ─── 저장 드롭다운 ─────────────────────────────────────── */
-.save-dropdown {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 6px);
-  width: 176px;
-  border-radius: 14px;
-  background: white;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(0, 0, 0, 0.07);
-  overflow: hidden;
-  animation: dropup 0.14s ease;
-  z-index: 50;
+@layer base {
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 30%),
+      radial-gradient(circle at top right, rgba(250, 204, 21, 0.10), transparent 24%),
+      linear-gradient(180deg, #f8fafc 0%, #eef2ff 46%, #f8fafc 100%);
+    background-attachment: fixed;
+    color: #0f172a;
+  }
 }
-@keyframes dropup {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+
+@layer components {
+  .input {
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(16px) saturate(145%);
+    border-top: 1px solid rgba(255, 255, 255, 0.92);
+    border-left: 1px solid rgba(255, 255, 255, 0.74);
+    border-right: 1px solid rgba(15, 23, 42, 0.07);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74), 0 1px 2px rgba(15, 23, 42, 0.04);
+    border-radius: 14px;
+  }
+
+  .input:focus {
+    border-color: rgba(37, 99, 235, 0.34);
+    box-shadow:
+      0 0 0 3px rgba(37, 99, 235, 0.10),
+      inset 0 1px 0 rgba(255, 255, 255, 0.74);
+  }
+
+  .glass-default {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.74) 100%);
+    backdrop-filter: blur(20px) saturate(155%);
+    border-top: 1px solid rgba(255, 255, 255, 0.94);
+    border-left: 1px solid rgba(255, 255, 255, 0.78);
+    border-right: 1px solid rgba(15, 23, 42, 0.06);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.09);
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.03),
+      0 18px 40px rgba(15, 23, 42, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  }
+
+  .glass-elevated {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.80) 100%);
+    backdrop-filter: blur(24px) saturate(165%);
+    border-top: 1px solid rgba(255, 255, 255, 0.96);
+    border-left: 1px solid rgba(255, 255, 255, 0.82);
+    border-right: 1px solid rgba(15, 23, 42, 0.06);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.10);
+    box-shadow:
+      0 2px 8px rgba(15, 23, 42, 0.05),
+      0 28px 70px rgba(15, 23, 42, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.94);
+  }
+
+  .glass-interactive {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(255, 255, 255, 0.74) 100%);
+    backdrop-filter: blur(18px) saturate(150%);
+    border-top: 1px solid rgba(255, 255, 255, 0.92);
+    border-left: 1px solid rgba(255, 255, 255, 0.76);
+    border-right: 1px solid rgba(15, 23, 42, 0.06);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.09);
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.03),
+      0 14px 34px rgba(15, 23, 42, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  }
+
+  .glass-interactive:hover {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.82));
+    box-shadow:
+      0 2px 6px rgba(15, 23, 42, 0.04),
+      0 24px 54px rgba(15, 23, 42, 0.10),
+      inset 0 1px 0 rgba(255, 255, 255, 0.96);
+    transform: translateY(-1px);
+  }
+
+  .glass-navbar {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0.78) 100%);
+    backdrop-filter: blur(22px) saturate(145%);
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.07), 0 10px 28px rgba(15, 23, 42, 0.06);
+  }
+
+  .glass-sidebar {
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.84) 0%, rgba(241, 245, 249, 0.76) 100%);
+    backdrop-filter: blur(22px) saturate(145%);
+    box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.07), 10px 0 28px rgba(15, 23, 42, 0.04);
+  }
+
+  .glass-sidebar-mobile {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.88) 100%);
+    backdrop-filter: blur(22px) saturate(150%);
+    box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.08), 16px 0 42px rgba(15, 23, 42, 0.08);
+  }
+
+  .glass-nav-active {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.86));
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.03),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.84),
+      inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  }
+}
+
+@layer base {
+  :root {
+    --workspace-border: rgba(15, 23, 42, 0.09);
+    --workspace-border-soft: rgba(15, 23, 42, 0.06);
+    --workspace-surface: rgba(255, 255, 255, 0.90);
+    --workspace-surface-strong: rgba(255, 255, 255, 0.96);
+    --workspace-surface-soft: rgba(248, 250, 252, 0.82);
+    --workspace-shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.03), 0 12px 32px rgba(15, 23, 42, 0.05);
+    --workspace-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 18px 40px rgba(15, 23, 42, 0.07);
+  }
+
+  body {
+    background: linear-gradient(180deg, #f4f6f8 0%, #eef2f6 100%);
+    color: #0f172a;
+  }
+}
+
+@layer components {
+  .input {
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(12px) saturate(120%);
+    border-top: 1px solid rgba(255, 255, 255, 0.96);
+    border-left: 1px solid rgba(255, 255, 255, 0.86);
+    border-right: 1px solid rgba(15, 23, 42, 0.08);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 2px rgba(15, 23, 42, 0.04);
+    border-radius: 12px;
+    padding: 11px 14px;
+  }
+
+  .glass-default,
+  .glass-elevated,
+  .glass-interactive {
+    border-radius: 20px;
+    border-top-width: 1px;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-bottom-width: 1px;
+  }
+
+  .glass-default {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.88) 100%);
+    backdrop-filter: blur(14px) saturate(120%);
+    border-top-color: rgba(255, 255, 255, 0.96);
+    border-left-color: rgba(255, 255, 255, 0.88);
+    border-right-color: var(--workspace-border);
+    border-bottom-color: rgba(15, 23, 42, 0.11);
+    box-shadow: var(--workspace-shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  }
+
+  .glass-elevated {
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.92) 100%);
+    backdrop-filter: blur(16px) saturate(122%);
+    border-top-color: rgba(255, 255, 255, 0.98);
+    border-left-color: rgba(255, 255, 255, 0.90);
+    border-right-color: var(--workspace-border);
+    border-bottom-color: rgba(15, 23, 42, 0.12);
+    box-shadow: var(--workspace-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.98);
+  }
+
+  .glass-interactive {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.93) 0%, rgba(255, 255, 255, 0.86) 100%);
+    backdrop-filter: blur(12px) saturate(118%);
+    border-top-color: rgba(255, 255, 255, 0.96);
+    border-left-color: rgba(255, 255, 255, 0.86);
+    border-right-color: var(--workspace-border);
+    border-bottom-color: rgba(15, 23, 42, 0.11);
+    box-shadow: var(--workspace-shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.94);
+  }
+
+  .glass-interactive:hover {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
+    box-shadow: var(--workspace-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.98);
+    transform: translateY(-1px);
+  }
+
+  .glass-navbar {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.88) 100%);
+    backdrop-filter: blur(16px) saturate(120%);
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.08), 0 12px 28px rgba(15, 23, 42, 0.06);
+  }
+
+  .glass-sidebar {
+    background: linear-gradient(180deg, rgba(247, 249, 251, 0.96) 0%, rgba(241, 245, 249, 0.92) 100%);
+    backdrop-filter: blur(14px) saturate(120%);
+    box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.08), 12px 0 30px rgba(15, 23, 42, 0.05);
+  }
+
+  .glass-sidebar-mobile {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 249, 251, 0.96) 100%);
+    backdrop-filter: blur(14px) saturate(120%);
+    box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.08), 16px 0 36px rgba(15, 23, 42, 0.08);
+  }
+
+  .glass-nav-active {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.90);
+  }
+
+  .workspace-panel {
+    border: 1px solid var(--workspace-border);
+    border-radius: 20px;
+    background: var(--workspace-surface);
+    box-shadow: var(--workspace-shadow-soft);
+  }
+
+  .workspace-panel-strong {
+    border: 1px solid var(--workspace-border);
+    border-radius: 22px;
+    background: var(--workspace-surface-strong);
+    box-shadow: var(--workspace-shadow);
+  }
+
+  .workspace-inset {
+    border: 1px solid var(--workspace-border-soft);
+    border-radius: 16px;
+    background: var(--workspace-surface-soft);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  }
+
+  .workspace-stat {
+    border: 1px solid var(--workspace-border-soft);
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.92) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.80);
+  }
+
+  .workspace-row {
+    border: 1px solid var(--workspace-border-soft);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  }
 }

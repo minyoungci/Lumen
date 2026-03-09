@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import RequestUser, get_current_user
 from app.models.note_version import NoteVersion
+from app.models.project import Project
 from app.models.research_note import ResearchNote
 from app.schemas.research_note import (
     ResearchNoteCreate,
@@ -17,8 +18,42 @@ from app.schemas.research_note import (
     ResearchNoteOut,
     ResearchNoteUpdate,
 )
+from app.tasks.knowledge_index_task import queue_delete as queue_knowledge_delete
+from app.tasks.knowledge_index_task import queue_upsert as queue_knowledge_upsert
 
 router = APIRouter()
+
+
+def _is_project_member(db: Session, project_id: UUID, user_id: UUID) -> bool:
+    from app.models.project_member import ProjectMember
+
+    return (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+        .first()
+        is not None
+    )
+
+
+def _verify_project_access(
+    db: Session,
+    project_id: Optional[UUID],
+    current_user: RequestUser,
+) -> None:
+    if project_id is None:
+        return
+
+    project_exists = db.query(Project.id).filter(Project.id == project_id).first()
+    if not project_exists:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if current_user.role == "admin":
+        return
+    if not _is_project_member(db, project_id, current_user.id):
+        raise HTTPException(status_code=403, detail="Not a member of this project")
 
 
 
@@ -48,13 +83,7 @@ def list_research_notes(
     q = db.query(ResearchNote).filter(ResearchNote.deleted_at.is_(None))
 
     if project_id is not None:
-        from app.models.project_member import ProjectMember
-        member = db.query(ProjectMember).filter(
-            ProjectMember.project_id == project_id,
-            ProjectMember.user_id == current_user.id,
-        ).first()
-        if not member:
-            raise HTTPException(status_code=403, detail="Not a member of this project")
+        _verify_project_access(db, project_id, current_user)
         q = q.filter(ResearchNote.project_id == project_id)
     else:
         if scope == "mine":
@@ -114,7 +143,9 @@ def get_research_note(
     if not row or row.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research note not found")
 
-    if (not row.is_shared) and row.user_id != current_user.id:
+    _verify_project_access(db, row.project_id, current_user)
+
+    if (not row.is_shared) and row.user_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return {"data": ResearchNoteOut.model_validate(row)}
@@ -127,6 +158,8 @@ def create_research_note(
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
+    _verify_project_access(db, project_id, current_user)
+
     row = ResearchNote(user_id=current_user.id, project_id=project_id, **payload.model_dump())
     try:
         db.add(row)
@@ -142,6 +175,10 @@ def create_research_note(
         )
         db.add(version)
         db.commit()
+        try:
+            queue_knowledge_upsert("research_note", row.id)
+        except Exception:
+            pass
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
@@ -193,6 +230,10 @@ def update_research_note(
         db.add(row)
         db.commit()
         db.refresh(row)
+        try:
+            queue_knowledge_upsert("research_note", row.id)
+        except Exception:
+            pass
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
@@ -218,6 +259,10 @@ def delete_research_note(
     try:
         db.add(row)
         db.commit()
+        try:
+            queue_knowledge_delete("research_note", row.id)
+        except Exception:
+            pass
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
@@ -242,6 +287,10 @@ def restore_research_note(
         db.add(row)
         db.commit()
         db.refresh(row)
+        try:
+            queue_knowledge_upsert("research_note", row.id)
+        except Exception:
+            pass
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error")

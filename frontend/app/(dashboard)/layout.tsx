@@ -7,22 +7,20 @@ export default function Layout({ children }: { children: ReactNode }) {
   return (
     <ProtectedRoute>
       <div className="relative min-h-screen text-text-primary">
-        {/* Aurora background — fixed behind all content */}
-        <div
-          className="pointer-events-none fixed inset-0 overflow-hidden"
-          style={{ zIndex: 0 }}
-          aria-hidden="true"
-        >
-          {/* Base background */}
-          <div className="absolute inset-0 bg-[#f5f5f7]" />
-          {/* visionOS-style aurora blobs */}
-          <div className="absolute -right-40 -top-40 h-[700px] w-[700px] rounded-full bg-blue-300 opacity-60 blur-[120px]" />
-          <div className="absolute -left-40 top-1/3 h-[600px] w-[600px] rounded-full bg-violet-300 opacity-50 blur-[110px]" />
-          <div className="absolute bottom-0 right-1/4 h-[500px] w-[500px] rounded-full bg-pink-300 opacity-45 blur-[100px]" />
-          <div className="absolute left-1/2 top-2/3 h-[400px] w-[400px] -translate-x-1/2 rounded-full bg-emerald-200 opacity-40 blur-[90px]" />
+        <div className="pointer-events-none fixed inset-0 overflow-hidden" style={{ zIndex: 0 }} aria-hidden="true">
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,#f4f6f8_0%,#eef2f6_48%,#f4f6f8_100%)]" />
+          <div className="absolute inset-x-0 top-0 h-[280px] bg-[radial-gradient(circle_at_top,rgba(37,99,235,0.14),transparent_62%)]" />
+          <div
+            className="absolute inset-0 opacity-50"
+            style={{
+              backgroundImage:
+                "linear-gradient(rgba(15,23,42,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.035) 1px, transparent 1px)",
+              backgroundSize: "32px 32px",
+              maskImage: "linear-gradient(180deg, rgba(255,255,255,0.55), transparent 72%)",
+            }}
+          />
         </div>
 
-        {/* Content layer — sits above aurora */}
         <div className="relative" style={{ zIndex: 1 }}>
           <Navbar />
           <LayoutShell>{children}</LayoutShell>

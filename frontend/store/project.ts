@@ -25,6 +25,12 @@ export const useProjectStore = create<ProjectStore>()(
       setCurrentProject: (id) => set({ currentProjectId: id }),
       setProjects: (projects) => set({ projects }),
     }),
-    { name: "lumen-project" }
+    {
+      name: "lumen-project",
+      skipHydration: true,
+      version: 1,
+      // v0 → v1: projects was accidentally stored as {data:[]} object; reset to defaults
+      migrate: () => ({ currentProjectId: null, projects: [] }),
+    }
   )
 );

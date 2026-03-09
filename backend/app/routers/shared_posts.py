@@ -20,6 +20,8 @@ from app.schemas.shared_post import (
     SharedPostUpdate,
 )
 from app.services.storage_service import storage_service
+from app.tasks.knowledge_index_task import queue_delete as queue_knowledge_delete
+from app.tasks.knowledge_index_task import queue_upsert as queue_knowledge_upsert
 from app.utils.profile import resolve_avatar_url, resolve_member_color
 
 router = APIRouter()
@@ -82,6 +84,49 @@ def _resolve_media_url(src: Any) -> Any:
     if cleaned.startswith("/uploads/files/"):
         return MISSING_UPLOAD_PLACEHOLDER
     return src
+
+
+def _canonicalize_media_src(src: Any) -> Any:
+    if not isinstance(src, str):
+        return src
+    cleaned = src.strip()
+    if not cleaned:
+        return src
+    canonical = storage_service.canonicalize_upload_url(cleaned)
+    return canonical or cleaned
+
+
+def _canonicalize_content_media(content: Any) -> Any:
+    if not isinstance(content, dict):
+        return content
+
+    normalized = copy.deepcopy(content)
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "image":
+                attrs = node.get("attrs")
+                if isinstance(attrs, dict):
+                    attrs["src"] = _canonicalize_media_src(attrs.get("src"))
+            for value in node.values():
+                _walk(value)
+            return
+        if isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(normalized)
+    return normalized
+
+
+def _canonicalize_cover_image_url(url: Optional[str]) -> Optional[str]:
+    if not isinstance(url, str):
+        return None
+    cleaned = url.strip()
+    if not cleaned:
+        return None
+    canonical = storage_service.canonicalize_upload_url(cleaned)
+    return canonical or cleaned
 
 
 def _hydrate_content_media(content: Any) -> Any:
@@ -367,6 +412,10 @@ def get_shared_post(
         db.add(row)
         db.commit()
         db.refresh(row)
+        try:
+            queue_knowledge_upsert("shared_post", row.id)
+        except Exception:
+            pass
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
@@ -384,14 +433,20 @@ def create_shared_post(
     _verify_project_access(db, project_id, current_user)
 
     payload_data = payload.model_dump()
+    payload_data["content"] = _canonicalize_content_media(payload_data.get("content"))
     if not payload_data.get("cover_image_url"):
         payload_data["cover_image_url"] = _extract_cover_image_url(payload_data.get("content"))
+    payload_data["cover_image_url"] = _canonicalize_cover_image_url(payload_data.get("cover_image_url"))
 
     row = SharedPost(user_id=current_user.id, project_id=project_id, **payload_data)
     try:
         db.add(row)
         db.commit()
         db.refresh(row)
+        try:
+            queue_knowledge_upsert("shared_post", row.id)
+        except Exception:
+            pass
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
@@ -432,9 +487,12 @@ def update_shared_post(
         if k in ALLOWED_POST_FIELDS
     }
     if "content" in updates:
+        updates["content"] = _canonicalize_content_media(updates.get("content"))
         updates["cover_image_url"] = _extract_cover_image_url(updates.get("content"))
     elif updates.get("cover_image_url") == "":
         updates["cover_image_url"] = None
+    elif "cover_image_url" in updates:
+        updates["cover_image_url"] = _canonicalize_cover_image_url(updates.get("cover_image_url"))
 
     for key, value in updates.items():
         setattr(row, key, value)
@@ -469,6 +527,10 @@ def delete_shared_post(
     try:
         db.add(row)
         db.commit()
+        try:
+            queue_knowledge_delete("shared_post", row.id)
+        except Exception:
+            pass
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error")

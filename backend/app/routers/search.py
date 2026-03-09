@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Dict, List, Optional, Set
 from uuid import UUID
 
@@ -12,12 +12,44 @@ from app.database import get_db
 from app.dependencies import RequestUser, get_current_user
 from app.models.content_tag import ContentTag
 from app.models.daily_log import DailyLog
+from app.models.project import Project
 from app.models.research_note import ResearchNote
 from app.models.shared_post import SharedPost
 from app.models.tag import Tag
 from app.models.user import UserProfile
+from app.services.knowledge_index_service import retrieve_knowledge
+from app.utils.profile import resolve_avatar_url
 
 router = APIRouter()
+
+
+def _verify_project_access(
+    db: Session,
+    project_id: Optional[UUID],
+    current_user: RequestUser,
+) -> None:
+    if project_id is None:
+        return
+
+    project_exists = db.query(Project.id).filter(Project.id == project_id).first()
+    if not project_exists:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if current_user.role == "admin":
+        return
+
+    from app.models.project_member import ProjectMember
+
+    member = (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not member:
+        raise HTTPException(status_code=403, detail="Not a member of this project")
 
 
 
@@ -46,7 +78,7 @@ def _authors_map(db: Session, user_ids: Set[UUID]) -> Dict[UUID, dict]:
         r.id: {
             "id": r.id,
             "display_name": r.display_name,
-            "avatar_url": r.avatar_url,
+            "avatar_url": resolve_avatar_url(r.avatar_url),
         }
         for r in rows
     }
@@ -55,17 +87,22 @@ def _authors_map(db: Session, user_ids: Set[UUID]) -> Dict[UUID, dict]:
 @router.get("", response_model=dict)
 def global_search(
     q: str = Query(..., min_length=1),
+    mode: str = Query(default="hybrid"),
     content_type: Optional[str] = Query(default=None),
     tag: Optional[str] = Query(default=None),
     author: Optional[UUID] = Query(default=None),
     from_date: Optional[date] = Query(default=None, alias="from"),
     to_date: Optional[date] = Query(default=None, alias="to"),
+    project_id: Optional[UUID] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     cursor: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
     query_text = f"%{q}%"
+    mode = (mode or "hybrid").strip().lower()
+    if mode not in {"standard", "knowledge", "hybrid"}:
+        raise HTTPException(status_code=400, detail="mode must be standard, knowledge or hybrid")
 
     allowed_types = {"research_note", "shared_post", "tag", "daily_log"}
     target_types = allowed_types
@@ -74,6 +111,7 @@ def global_search(
         unknown = target_types - allowed_types
         if unknown:
             raise HTTPException(status_code=400, detail=f"Invalid content_type: {', '.join(sorted(unknown))}")
+    _verify_project_access(db, project_id, current_user)
 
     tagged_notes: Optional[Set[UUID]] = None
     tagged_posts: Optional[Set[UUID]] = None
@@ -98,8 +136,15 @@ def global_search(
             ResearchNote.deleted_at.is_(None),
             (ResearchNote.title.ilike(query_text)) | (cast(ResearchNote.content, String).ilike(query_text)),
         )
+        if project_id is not None:
+            q_notes = q_notes.filter(ResearchNote.project_id == project_id)
+        else:
+            q_notes = q_notes.filter(ResearchNote.project_id.is_(None))
 
-        q_notes = q_notes.filter((ResearchNote.user_id == current_user.id) | (ResearchNote.is_shared.is_(True)))
+        if current_user.role != "admin":
+            q_notes = q_notes.filter(
+                (ResearchNote.user_id == current_user.id) | (ResearchNote.is_shared.is_(True))
+            )
 
         if author:
             q_notes = q_notes.filter(ResearchNote.user_id == author)
@@ -124,6 +169,9 @@ def global_search(
                     "author_id": row.user_id,
                     "tags": [],
                     "matched_field": "title/content",
+                    "subtype": None,
+                    "log_date": None,
+                    "slug": None,
                     "updated_at": row.updated_at,
                 }
             )
@@ -133,6 +181,17 @@ def global_search(
             SharedPost.deleted_at.is_(None),
             (SharedPost.title.ilike(query_text)) | (cast(SharedPost.content, String).ilike(query_text)),
         )
+        if project_id is not None:
+            q_posts = q_posts.filter(SharedPost.project_id == project_id)
+        else:
+            q_posts = q_posts.filter(SharedPost.project_id.is_(None))
+
+        if current_user.role == "admin":
+            pass
+        else:
+            q_posts = q_posts.filter(
+                (SharedPost.visibility == "shared") | (SharedPost.user_id == current_user.id)
+            )
 
         if author:
             q_posts = q_posts.filter(SharedPost.user_id == author)
@@ -157,6 +216,9 @@ def global_search(
                     "author_id": row.user_id,
                     "tags": [],
                     "matched_field": "title/content",
+                    "subtype": row.type,
+                    "log_date": None,
+                    "slug": None,
                     "updated_at": row.updated_at,
                 }
             )
@@ -173,6 +235,9 @@ def global_search(
                     "author_id": row.created_by,
                     "tags": [],
                     "matched_field": "name/description",
+                    "subtype": None,
+                    "log_date": None,
+                    "slug": row.slug,
                     "updated_at": row.created_at,
                 }
             )
@@ -184,6 +249,10 @@ def global_search(
             DailyLog.user_id == current_user.id,
             cast(DailyLog.content, String).ilike(query_text),
         )
+        if project_id is not None:
+            q_logs = q_logs.filter(DailyLog.project_id == project_id)
+        else:
+            q_logs = q_logs.filter(DailyLog.project_id.is_(None))
         if from_date:
             q_logs = q_logs.filter(DailyLog.log_date >= from_date)
         if to_date:
@@ -199,6 +268,9 @@ def global_search(
                     "author_id": row.user_id,
                     "tags": [],
                     "matched_field": "content",
+                    "subtype": None,
+                    "log_date": row.log_date.isoformat(),
+                    "slug": None,
                     "updated_at": row.updated_at,
                 }
             )
@@ -238,7 +310,13 @@ def global_search(
                 "author": authors.get(row["author_id"]),
                 "tags": tags_by_content.get(key, []),
                 "matched_field": row["matched_field"],
+                "subtype": row.get("subtype"),
+                "log_date": row.get("log_date"),
+                "slug": row.get("slug"),
                 "updated_at": row["updated_at"],
+                "relevance_score": None,
+                "match_reason": None,
+                "evidence_snippet": None,
             }
         )
 
@@ -247,6 +325,80 @@ def global_search(
         return dt.timestamp() if dt else 0.0
 
     normalized.sort(key=_sort_key, reverse=True)
+
+    if mode in {"knowledge", "hybrid"}:
+        source_types = {"research_note", "shared_post", "daily_log"}.intersection(target_types)
+        if content_type and not source_types:
+            knowledge_hits = []
+        else:
+            knowledge_hits = retrieve_knowledge(
+                db=db,
+                current_user=current_user,
+                query=q,
+                project_id=project_id,
+                source_types=source_types if source_types else None,
+                top_k=max(limit * 2, 20),
+            )
+        knowledge_rows = []
+        for row in knowledge_hits:
+            updated_at_raw = row.get("updated_at")
+            updated_at = None
+            if isinstance(updated_at_raw, str) and updated_at_raw:
+                try:
+                    updated_at = datetime.fromisoformat(updated_at_raw)
+                except ValueError:
+                    updated_at = None
+            knowledge_rows.append(
+                {
+                    "id": row["source_id"],
+                    "content_type": row["source_type"],
+                    "title": row["title"],
+                    "preview": row.get("summary") or row.get("snippet"),
+                    "author": None,
+                    "tags": [],
+                    "matched_field": "knowledge",
+                    "subtype": row.get("source_subtype"),
+                    "log_date": None,
+                    "slug": None,
+                    "updated_at": updated_at,
+                    "relevance_score": row.get("score"),
+                    "match_reason": row.get("match_reason"),
+                    "evidence_snippet": row.get("snippet"),
+                }
+            )
+
+        if mode == "knowledge":
+            normalized = knowledge_rows
+        else:
+            merged: dict[tuple[str, str], dict] = {}
+            for item in normalized:
+                merged[(str(item["content_type"]), str(item["id"]))] = item
+            for item in knowledge_rows:
+                key = (str(item["content_type"]), str(item["id"]))
+                existing = merged.get(key)
+                if existing is None:
+                    merged[key] = item
+                    continue
+                existing_score = existing.get("relevance_score")
+                incoming_score = item.get("relevance_score")
+                if incoming_score is not None and (
+                    existing_score is None or float(incoming_score) > float(existing_score)
+                ):
+                    existing["relevance_score"] = incoming_score
+                    existing["match_reason"] = item.get("match_reason")
+                    existing["evidence_snippet"] = item.get("evidence_snippet")
+                    if not existing.get("preview"):
+                        existing["preview"] = item.get("preview")
+            normalized = list(merged.values())
+
+    def _sort_key_with_relevance(item: dict) -> tuple[float, float]:
+        relevance = float(item.get("relevance_score") or 0.0)
+        dt = item.get("updated_at")
+        ts = dt.timestamp() if hasattr(dt, "timestamp") else 0.0
+        return relevance, ts
+
+    if mode in {"knowledge", "hybrid"}:
+        normalized.sort(key=_sort_key_with_relevance, reverse=True)
 
     offset = 0
     if cursor:

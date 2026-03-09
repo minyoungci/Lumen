@@ -1,8 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 
 export function BackgroundBlobs() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
+  if (!mounted) {
+    return <div className="fixed inset-0 -z-10 pointer-events-none overflow-hidden" />;
+  }
+
   return (
     <div className="fixed inset-0 -z-10 pointer-events-none overflow-hidden">
       <motion.div

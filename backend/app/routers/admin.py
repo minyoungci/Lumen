@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta
 import json
+from pathlib import Path
 import urllib.error
 import urllib.request
+from urllib.parse import unquote, urlparse
 from typing import Any, Dict, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -34,9 +36,11 @@ from app.models.site_setting import SiteSetting
 from app.models.tag import Tag
 from app.models.upload import Upload
 from app.models.user import UserProfile
+from app.services.storage_service import SUPABASE_UPLOAD_URI_PREFIX, storage_service
 from app.utils.profile import resolve_avatar_url, resolve_member_color
 from app.utils.site_config import configs_equal, deep_merge, ensure_site_config
 from app.utils.security import is_admin_email
+from app.utils.upload_rules import ensure_within_size_limit, resolve_upload_content_type
 
 
 class MemberRoleUpdate(BaseModel):
@@ -47,8 +51,28 @@ class SiteSettingsDraftUpdate(BaseModel):
     config: Dict[str, Any]
     mode: Literal["replace", "merge"] = "replace"
 
+
+class StorageIntegrityRepairRequest(BaseModel):
+    upload_limit: int = 1000
+    shared_post_limit: int = 1000
+
+
+class StorageMissingUploadListResponse(BaseModel):
+    upload_id: str
+    user_id: str
+    original_name: str
+    mime_type: str
+    file_type: str
+    size_bytes: int
+    object_path: str
+    missing_supabase: bool
+    missing_local_backup: bool
+    created_at: Optional[str] = None
+
+
 router = APIRouter()
 SITE_SETTINGS_SCOPE = "global"
+LOCAL_UPLOAD_URL_PREFIX = "/uploads/files/"
 
 
 def _supabase_admin_request(method: str, path: str) -> Optional[dict]:
@@ -194,6 +218,315 @@ def _site_settings_payload(row: SiteSetting) -> dict:
         "published_at": row.published_at.isoformat() if row.published_at else None,
         "updated_by": str(row.updated_by) if row.updated_by else None,
     }
+
+
+def _upload_object_path(row: Upload) -> Optional[str]:
+    for candidate in (row.public_url, row.storage_path):
+        canonical = storage_service.canonicalize_upload_url(candidate)
+        if isinstance(canonical, str) and canonical.startswith(SUPABASE_UPLOAD_URI_PREFIX):
+            object_path = canonical.removeprefix(SUPABASE_UPLOAD_URI_PREFIX).strip()
+            if object_path:
+                return object_path
+
+    public_url = (row.public_url or "").strip()
+    if public_url.startswith(LOCAL_UPLOAD_URL_PREFIX):
+        relative = unquote(public_url[len(LOCAL_UPLOAD_URL_PREFIX):]).lstrip("/")
+        if relative:
+            return relative
+
+    storage_path = (row.storage_path or "").strip()
+    if storage_path:
+        try:
+            relative = Path(storage_path).resolve().relative_to(Path(settings.UPLOAD_DIR).resolve())
+            normalized = str(relative).replace("\\", "/")
+            if normalized and normalized != ".":
+                return normalized
+        except Exception:
+            return None
+
+    return None
+
+
+def _collect_image_sources(node: Any, out: list[str]) -> None:
+    if isinstance(node, dict):
+        if node.get("type") == "image":
+            attrs = node.get("attrs")
+            if isinstance(attrs, dict):
+                src = attrs.get("src")
+                if isinstance(src, str) and src.strip():
+                    out.append(src.strip())
+        for value in node.values():
+            _collect_image_sources(value, out)
+        return
+
+    if isinstance(node, list):
+        for item in node:
+            _collect_image_sources(item, out)
+
+
+def _media_source_object_path(src: str) -> Optional[str]:
+    cleaned = src.strip()
+    if not cleaned:
+        return None
+
+    canonical = storage_service.canonicalize_upload_url(cleaned)
+    if isinstance(canonical, str) and canonical.startswith(SUPABASE_UPLOAD_URI_PREFIX):
+        object_path = canonical.removeprefix(SUPABASE_UPLOAD_URI_PREFIX).strip()
+        return object_path or None
+
+    parsed = urlparse(canonical or cleaned)
+    path = parsed.path or cleaned
+    if path.startswith(LOCAL_UPLOAD_URL_PREFIX):
+        object_path = unquote(path[len(LOCAL_UPLOAD_URL_PREFIX):]).lstrip("/")
+        return object_path or None
+
+    return None
+
+
+def _build_storage_integrity_report(
+    db: Session,
+    upload_limit: int,
+    shared_post_limit: int,
+) -> dict:
+    upload_rows = (
+        db.query(Upload)
+        .order_by(Upload.created_at.desc())
+        .limit(upload_limit)
+        .all()
+    )
+
+    status_cache: dict[str, tuple[bool, bool]] = {}
+    missing_samples: list[dict[str, str]] = []
+    unresolved_samples: list[dict[str, str]] = []
+
+    upload_counts = {
+        "scanned": len(upload_rows),
+        "resolved_paths": 0,
+        "unresolved_paths": 0,
+        "present_in_supabase": 0,
+        "present_in_local_backup": 0,
+        "present_in_both": 0,
+        "missing_in_supabase": 0,
+        "missing_in_local_backup": 0,
+        "missing_in_both": 0,
+    }
+
+    def _status_for_path(object_path: str) -> tuple[bool, bool]:
+        if object_path in status_cache:
+            return status_cache[object_path]
+        supabase_exists = storage_service.supabase_object_exists(object_path)
+        local_exists = storage_service.local_backup_exists(object_path)
+        status_cache[object_path] = (supabase_exists, local_exists)
+        return status_cache[object_path]
+
+    for row in upload_rows:
+        object_path = _upload_object_path(row)
+        if not object_path:
+            upload_counts["unresolved_paths"] += 1
+            if len(unresolved_samples) < 20:
+                unresolved_samples.append(
+                    {
+                        "upload_id": str(row.id),
+                        "filename": row.original_name,
+                    }
+                )
+            continue
+
+        upload_counts["resolved_paths"] += 1
+        supabase_exists, local_exists = _status_for_path(object_path)
+
+        if supabase_exists:
+            upload_counts["present_in_supabase"] += 1
+        if local_exists:
+            upload_counts["present_in_local_backup"] += 1
+        if supabase_exists and local_exists:
+            upload_counts["present_in_both"] += 1
+        if not supabase_exists:
+            upload_counts["missing_in_supabase"] += 1
+        if not local_exists:
+            upload_counts["missing_in_local_backup"] += 1
+        if not supabase_exists and not local_exists:
+            upload_counts["missing_in_both"] += 1
+            if len(missing_samples) < 20:
+                missing_samples.append(
+                    {
+                        "upload_id": str(row.id),
+                        "filename": row.original_name,
+                        "object_path": object_path,
+                    }
+                )
+
+    post_rows = (
+        db.query(SharedPost.id, SharedPost.title, SharedPost.content)
+        .filter(SharedPost.deleted_at.is_(None))
+        .order_by(SharedPost.updated_at.desc())
+        .limit(shared_post_limit)
+        .all()
+    )
+
+    shared_paths: set[str] = set()
+    shared_missing_paths: set[str] = set()
+    shared_missing_samples: list[dict[str, str]] = []
+
+    for post_id, title, content in post_rows:
+        sources: list[str] = []
+        _collect_image_sources(content, sources)
+        for source in sources:
+            object_path = _media_source_object_path(source)
+            if not object_path:
+                continue
+            shared_paths.add(object_path)
+            supabase_exists, local_exists = _status_for_path(object_path)
+            if supabase_exists or local_exists:
+                continue
+            shared_missing_paths.add(object_path)
+            if len(shared_missing_samples) < 20:
+                shared_missing_samples.append(
+                    {
+                        "post_id": str(post_id),
+                        "post_title": title or "",
+                        "object_path": object_path,
+                    }
+                )
+
+    return {
+        "uploads": upload_counts,
+        "shared_media": {
+            "scanned_posts": len(post_rows),
+            "unique_paths": len(shared_paths),
+            "missing_paths": len(shared_missing_paths),
+            "missing_samples": shared_missing_samples,
+        },
+        "samples": {
+            "upload_missing_both": missing_samples,
+            "upload_unresolved_path": unresolved_samples,
+        },
+    }
+
+
+def _repair_storage_integrity_internal(
+    db: Session,
+    upload_limit: int,
+    shared_post_limit: int,
+) -> dict:
+    upload_rows = (
+        db.query(Upload)
+        .order_by(Upload.created_at.desc())
+        .limit(upload_limit)
+        .all()
+    )
+
+    object_mime_map: dict[str, Optional[str]] = {}
+    unresolved_uploads = 0
+    for row in upload_rows:
+        object_path = _upload_object_path(row)
+        if not object_path:
+            unresolved_uploads += 1
+            continue
+        existing_mime = object_mime_map.get(object_path)
+        if existing_mime:
+            continue
+        object_mime_map[object_path] = row.mime_type
+
+    repaired_supabase = 0
+    repaired_local_backup = 0
+    failed_repairs: list[dict[str, str]] = []
+
+    for object_path, mime_type in object_mime_map.items():
+        supabase_exists = storage_service.supabase_object_exists(object_path)
+        local_exists = storage_service.local_backup_exists(object_path)
+
+        if local_exists and not supabase_exists:
+            restored = storage_service.restore_supabase_from_local_backup(
+                object_path=object_path,
+                content_type=mime_type,
+            )
+            if restored:
+                repaired_supabase += 1
+                supabase_exists = True
+            elif len(failed_repairs) < 30:
+                failed_repairs.append(
+                    {
+                        "object_path": object_path,
+                        "reason": "Failed to restore Supabase object from local backup",
+                    }
+                )
+
+        if supabase_exists and not local_exists:
+            restored = storage_service.restore_local_backup_from_supabase(object_path=object_path)
+            if restored:
+                repaired_local_backup += 1
+            elif len(failed_repairs) < 30:
+                failed_repairs.append(
+                    {
+                        "object_path": object_path,
+                        "reason": "Failed to restore local backup from Supabase object",
+                    }
+                )
+
+    after_report = _build_storage_integrity_report(
+        db=db,
+        upload_limit=upload_limit,
+        shared_post_limit=shared_post_limit,
+    )
+
+    return {
+        "scanned_uploads": len(upload_rows),
+        "scanned_object_paths": len(object_mime_map),
+        "unresolved_uploads": unresolved_uploads,
+        "repaired_supabase_objects": repaired_supabase,
+        "repaired_local_backups": repaired_local_backup,
+        "failed_repairs": failed_repairs,
+        "integrity_after": after_report,
+    }
+
+
+def _list_missing_uploads(
+    db: Session,
+    limit: int,
+    mode: Literal["both", "supabase", "local", "any"],
+) -> list[StorageMissingUploadListResponse]:
+    rows = (
+        db.query(Upload)
+        .order_by(Upload.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    data: list[StorageMissingUploadListResponse] = []
+    for row in rows:
+        object_path = _upload_object_path(row)
+        if not object_path:
+            continue
+
+        missing_supabase = not storage_service.supabase_object_exists(object_path)
+        missing_local = not storage_service.local_backup_exists(object_path)
+
+        if mode == "both" and not (missing_supabase and missing_local):
+            continue
+        if mode == "supabase" and not missing_supabase:
+            continue
+        if mode == "local" and not missing_local:
+            continue
+        if mode == "any" and not (missing_supabase or missing_local):
+            continue
+
+        data.append(
+            StorageMissingUploadListResponse(
+                upload_id=str(row.id),
+                user_id=str(row.user_id),
+                original_name=row.original_name,
+                mime_type=row.mime_type,
+                file_type=row.file_type,
+                size_bytes=int(row.size_bytes),
+                object_path=object_path,
+                missing_supabase=missing_supabase,
+                missing_local_backup=missing_local,
+                created_at=row.created_at.isoformat() if row.created_at else None,
+            )
+        )
+
+    return data
 
 
 @router.get("/site-settings", response_model=dict)
@@ -404,12 +737,175 @@ def get_storage_breakdown(
     return {"data": data}
 
 
+@router.get("/storage/integrity", response_model=dict)
+def get_storage_integrity(
+    upload_limit: int = Query(default=1000, ge=1, le=5000),
+    shared_post_limit: int = Query(default=1000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: RequestUser = Depends(require_admin),
+):
+    report = _build_storage_integrity_report(
+        db=db,
+        upload_limit=upload_limit,
+        shared_post_limit=shared_post_limit,
+    )
+    return {"data": report}
+
+
+@router.post("/storage/integrity/repair", response_model=dict)
+def repair_storage_integrity(
+    payload: StorageIntegrityRepairRequest,
+    db: Session = Depends(get_db),
+    _: RequestUser = Depends(require_admin),
+):
+    upload_limit = min(max(payload.upload_limit, 1), 5000)
+    shared_post_limit = min(max(payload.shared_post_limit, 1), 5000)
+    result = _repair_storage_integrity_internal(
+        db=db,
+        upload_limit=upload_limit,
+        shared_post_limit=shared_post_limit,
+    )
+
+    return {
+        "message": "Storage integrity repair completed",
+        "data": result,
+    }
+
+
+@router.get("/storage/missing-uploads", response_model=dict)
+def list_missing_uploads(
+    mode: Literal["both", "supabase", "local", "any"] = Query(default="both"),
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: RequestUser = Depends(require_admin),
+):
+    rows = _list_missing_uploads(db=db, limit=limit, mode=mode)
+    return {
+        "data": [row.model_dump() for row in rows],
+        "pagination": {
+            "total": len(rows),
+            "limit": limit,
+            "mode": mode,
+        },
+    }
+
+
+@router.post("/storage/missing-uploads/{upload_id}/reupload", response_model=dict)
+async def reupload_missing_upload(
+    upload_id: UUID,
+    file: Optional[UploadFile] = File(default=None),
+    db: Session = Depends(get_db),
+    _: RequestUser = Depends(require_admin),
+):
+    row = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
+
+    object_path = _upload_object_path(row)
+    if not object_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload object path could not be resolved",
+        )
+
+    supabase_exists = storage_service.supabase_object_exists(object_path)
+    local_exists = storage_service.local_backup_exists(object_path)
+    if supabase_exists and local_exists:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload already healthy in Supabase and local backup",
+        )
+
+    if local_exists and not supabase_exists:
+        if storage_service.restore_supabase_from_local_backup(object_path=object_path, content_type=row.mime_type):
+            return {
+                "data": {
+                    "upload_id": str(row.id),
+                    "object_path": object_path,
+                    "restored_from": "local_backup",
+                },
+                "message": "Supabase object restored from local backup",
+            }
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to restore Supabase object from local backup",
+        )
+
+    if supabase_exists and not local_exists:
+        if storage_service.restore_local_backup_from_supabase(object_path=object_path):
+            return {
+                "data": {
+                    "upload_id": str(row.id),
+                    "object_path": object_path,
+                    "restored_from": "supabase",
+                },
+                "message": "Local backup restored from Supabase object",
+            }
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to restore local backup from Supabase object",
+        )
+
+    # Both missing: require admin to provide the original file for re-upload.
+    if file is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is required when both Supabase and local backup are missing",
+        )
+
+    content = await file.read()
+    ensure_within_size_limit(content)
+    normalized_file_type, resolved_content_type = resolve_upload_content_type(
+        file_type=row.file_type,
+        filename=file.filename or row.original_name,
+        content_type=file.content_type,
+        content=content,
+    )
+    if normalized_file_type != row.file_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Uploaded file_type '{normalized_file_type}' does not match original '{row.file_type}'",
+        )
+
+    success = storage_service.put_object(
+        object_path=object_path,
+        content=content,
+        content_type=resolved_content_type,
+        upsert=True,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to upload file to storage",
+        )
+
+    row.mime_type = resolved_content_type
+    row.size_bytes = len(content)
+    row.public_url = f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
+    row.storage_path = f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    return {
+        "data": {
+            "upload_id": str(row.id),
+            "object_path": object_path,
+            "mime_type": row.mime_type,
+            "size_bytes": row.size_bytes,
+        },
+        "message": "Missing upload re-uploaded successfully",
+    }
+
+
 @router.get("/users", response_model=dict)
 def list_users_admin(
+    window_days: int = Query(default=7, ge=1, le=90),
     db: Session = Depends(get_db),
     _: RequestUser = Depends(require_admin),
 ):
     users = db.query(UserProfile).order_by(UserProfile.display_name.asc()).all()
+    window_start = datetime.utcnow() - timedelta(days=window_days)
 
     memberships = db.query(ProjectMember).all()
     project_ids = {m.project_id for m in memberships}
@@ -425,8 +921,147 @@ def list_users_admin(
             "joined_at": m.joined_at.isoformat() if m.joined_at else None,
         })
 
+    note_counts = {
+        row[0]: int(row[1] or 0)
+        for row in (
+            db.query(ResearchNote.user_id, func.count(ResearchNote.id))
+            .filter(ResearchNote.deleted_at.is_(None))
+            .group_by(ResearchNote.user_id)
+            .all()
+        )
+        if row[0] is not None
+    }
+    note_recent_counts = {
+        row[0]: int(row[1] or 0)
+        for row in (
+            db.query(ResearchNote.user_id, func.count(ResearchNote.id))
+            .filter(ResearchNote.deleted_at.is_(None), ResearchNote.created_at >= window_start)
+            .group_by(ResearchNote.user_id)
+            .all()
+        )
+        if row[0] is not None
+    }
+
+    shared_counts = {
+        row[0]: int(row[1] or 0)
+        for row in (
+            db.query(SharedPost.user_id, func.count(SharedPost.id))
+            .filter(SharedPost.deleted_at.is_(None))
+            .group_by(SharedPost.user_id)
+            .all()
+        )
+        if row[0] is not None
+    }
+    shared_recent_counts = {
+        row[0]: int(row[1] or 0)
+        for row in (
+            db.query(SharedPost.user_id, func.count(SharedPost.id))
+            .filter(SharedPost.deleted_at.is_(None), SharedPost.created_at >= window_start)
+            .group_by(SharedPost.user_id)
+            .all()
+        )
+        if row[0] is not None
+    }
+
+    comment_counts = {
+        row[0]: int(row[1] or 0)
+        for row in (
+            db.query(Comment.user_id, func.count(Comment.id))
+            .filter(Comment.deleted_at.is_(None))
+            .group_by(Comment.user_id)
+            .all()
+        )
+        if row[0] is not None
+    }
+    comment_recent_counts = {
+        row[0]: int(row[1] or 0)
+        for row in (
+            db.query(Comment.user_id, func.count(Comment.id))
+            .filter(Comment.deleted_at.is_(None), Comment.created_at >= window_start)
+            .group_by(Comment.user_id)
+            .all()
+        )
+        if row[0] is not None
+    }
+
+    daily_counts = {
+        row[0]: int(row[1] or 0)
+        for row in (
+            db.query(DailyLog.user_id, func.count(DailyLog.id))
+            .group_by(DailyLog.user_id)
+            .all()
+        )
+        if row[0] is not None
+    }
+    daily_recent_counts = {
+        row[0]: int(row[1] or 0)
+        for row in (
+            db.query(DailyLog.user_id, func.count(DailyLog.id))
+            .filter(DailyLog.created_at >= window_start)
+            .group_by(DailyLog.user_id)
+            .all()
+        )
+        if row[0] is not None
+    }
+
+    last_active_map: dict[UUID, datetime] = {}
+
+    def merge_last_activity(rows: list[tuple[UUID, Optional[datetime]]]) -> None:
+        for user_id, last_seen in rows:
+            if user_id is None or last_seen is None:
+                continue
+            existing = last_active_map.get(user_id)
+            if existing is None or last_seen > existing:
+                last_active_map[user_id] = last_seen
+
+    merge_last_activity(
+        (
+            db.query(ResearchNote.user_id, func.max(func.coalesce(ResearchNote.updated_at, ResearchNote.created_at)))
+            .filter(ResearchNote.deleted_at.is_(None))
+            .group_by(ResearchNote.user_id)
+            .all()
+        )
+    )
+    merge_last_activity(
+        (
+            db.query(SharedPost.user_id, func.max(func.coalesce(SharedPost.updated_at, SharedPost.created_at)))
+            .filter(SharedPost.deleted_at.is_(None))
+            .group_by(SharedPost.user_id)
+            .all()
+        )
+    )
+    merge_last_activity(
+        (
+            db.query(Comment.user_id, func.max(func.coalesce(Comment.updated_at, Comment.created_at)))
+            .filter(Comment.deleted_at.is_(None))
+            .group_by(Comment.user_id)
+            .all()
+        )
+    )
+    merge_last_activity(
+        (
+            db.query(DailyLog.user_id, func.max(func.coalesce(DailyLog.updated_at, DailyLog.created_at)))
+            .group_by(DailyLog.user_id)
+            .all()
+        )
+    )
+
     data = []
     for user in users:
+        notes_total = note_counts.get(user.id, 0)
+        shared_total = shared_counts.get(user.id, 0)
+        comments_total = comment_counts.get(user.id, 0)
+        daily_total = daily_counts.get(user.id, 0)
+
+        notes_recent = note_recent_counts.get(user.id, 0)
+        shared_recent = shared_recent_counts.get(user.id, 0)
+        comments_recent = comment_recent_counts.get(user.id, 0)
+        daily_recent = daily_recent_counts.get(user.id, 0)
+
+        activity_total = notes_total + shared_total + comments_total + daily_total
+        activity_recent_total = notes_recent + shared_recent + comments_recent + daily_recent
+        last_active_at = last_active_map.get(user.id)
+
         data.append({
             "id": str(user.id),
             "display_name": user.display_name,
@@ -435,6 +1070,22 @@ def list_users_admin(
             "role": user.role,
             "is_active": user.is_active,
             "projects": user_memberships.get(user.id, []),
+            "activity": {
+                "window_days": window_days,
+                "total": activity_total,
+                "last_active_at": last_active_at.isoformat() if last_active_at else None,
+                "research_notes": notes_total,
+                "shared_posts": shared_total,
+                "comments": comments_total,
+                "daily_logs": daily_total,
+                "recent": {
+                    "total": activity_recent_total,
+                    "research_notes": notes_recent,
+                    "shared_posts": shared_recent,
+                    "comments": comments_recent,
+                    "daily_logs": daily_recent,
+                },
+            },
         })
 
     return {"data": data}

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer, Boolean, ARRAY, JSON
+from sqlalchemy import Column, String, DateTime, Text, Integer, Boolean, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -15,5 +15,6 @@ class UserProfile(Base):
     role = Column(String(20), nullable=False, default="member")
     is_active = Column(Boolean, nullable=False, default=True)
     storage_used = Column(Integer, nullable=False, default=0)
+    preferences = Column(JSON, nullable=False, server_default="{}", default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

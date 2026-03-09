@@ -8,6 +8,19 @@ function toRole(value: unknown): UserRole {
   return value === "admin" ? "admin" : "member";
 }
 
+function readMetadataValue(source: unknown, field: "app_metadata" | "user_metadata"): unknown {
+  if (!source || typeof source !== "object") return undefined;
+  const value = (source as Record<string, unknown>)[field];
+  if (!value || typeof value !== "object") return undefined;
+  return (value as Record<string, unknown>).role;
+}
+
+function readString(source: unknown, field: "id" | "email"): string | null {
+  if (!source || typeof source !== "object") return null;
+  const value = (source as Record<string, unknown>)[field];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -15,25 +28,33 @@ export function useAuth() {
   useEffect(() => {
     let mounted = true;
 
-    const syncSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      const sessionUser = data.session?.user;
-
+    const syncFromSessionUser = (sessionUser: unknown) => {
       if (!mounted) return;
-
-      if (!sessionUser) {
+      const id = readString(sessionUser, "id");
+      if (!id) {
         setUser(null);
         setLoading(false);
         return;
       }
 
-      const role = toRole(sessionUser.user_metadata?.role ?? sessionUser.app_metadata?.role);
+      const role = toRole(
+        readMetadataValue(sessionUser, "app_metadata") ?? readMetadataValue(sessionUser, "user_metadata"),
+      );
       setUser({
-        id: sessionUser.id,
-        email: sessionUser.email ?? "",
+        id,
+        email: readString(sessionUser, "email") ?? "",
         role,
       });
       setLoading(false);
+    };
+
+    const syncSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        syncFromSessionUser(data.session?.user);
+      } catch {
+        syncFromSessionUser(null);
+      }
     };
 
     void syncSession();
@@ -41,20 +62,7 @@ export function useAuth() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      const sessionUser = session?.user;
-      if (!sessionUser) {
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-
-      const role = toRole(sessionUser.user_metadata?.role ?? sessionUser.app_metadata?.role);
-      setUser({
-        id: sessionUser.id,
-        email: sessionUser.email ?? "",
-        role,
-      });
-      setLoading(false);
+      syncFromSessionUser(session?.user);
     });
 
     return () => {

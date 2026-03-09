@@ -11,6 +11,9 @@ class CommentAuthor(BaseModel):
     id: UUID
     display_name: str
     avatar_url: Optional[str] = None
+    member_color: Optional[str] = None
+    status_message: Optional[str] = None
+    pronouns: Optional[str] = None
 
 
 class CommentCreate(BaseModel):
@@ -24,12 +27,24 @@ class CommentUpdate(BaseModel):
     body: Dict[str, Any]
 
 
+class CommentReactionToggle(BaseModel):
+    emoji: str
+
+
+class CommentReactionSummary(BaseModel):
+    emoji: str
+    count: int
+    reacted: bool = False
+
+
 class CommentOut(BaseModel):
     id: UUID
     author: CommentAuthor
     body: Dict[str, Any]
     parent_id: Optional[UUID] = None
     is_edited: bool
+    reactions: List[CommentReactionSummary] = Field(default_factory=list)
+    reactions_total: int = 0
     replies: List["CommentOut"] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

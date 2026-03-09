@@ -7,7 +7,7 @@ import redis
 from app.routers import (
     auth, users, daily_logs, ai_summaries, research_notes, shared_posts,
     tags, comments, notifications, schedule, uploads, bookmarks, graph,
-    search, activity, admin, kanban, projects, site_settings, billing
+    search, activity, admin, kanban, projects, site_settings, billing, knowledge
 )
 from app.config import settings
 from app.database import engine
@@ -71,6 +71,8 @@ app.include_router(kanban.router, prefix=f"{PREFIX}/kanban", tags=["Kanban"])
 app.include_router(projects.router, prefix=f"{PREFIX}/projects", tags=["Projects"])
 app.include_router(site_settings.router, prefix=f"{PREFIX}/site-settings", tags=["Site Settings"])
 app.include_router(billing.router, prefix=f"{PREFIX}/billing", tags=["Billing"])
+app.include_router(knowledge.router, prefix=f"{PREFIX}/knowledge", tags=["Knowledge"])
+app.include_router(knowledge.admin_router, prefix=f"{PREFIX}/admin/knowledge", tags=["Admin Knowledge"])
 
 upload_root = Path(settings.UPLOAD_DIR)
 upload_root.mkdir(parents=True, exist_ok=True)

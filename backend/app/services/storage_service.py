@@ -4,9 +4,12 @@ import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from mimetypes import guess_type
 from pathlib import Path
 from typing import Optional
-from urllib.parse import unquote, urlparse
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+from urllib.parse import quote, unquote, urlparse
 from uuid import UUID
 
 from app.config import settings
@@ -104,6 +107,138 @@ class StorageService:
             file_options={"content-type": content_type, "upsert": "false"},
         )
 
+    def _local_backup_path(self, object_path: str) -> Path:
+        return LOCAL_UPLOAD_ROOT / object_path
+
+    def local_backup_exists(self, object_path: str) -> bool:
+        if not object_path:
+            return False
+        return self._local_backup_path(object_path).exists()
+
+    def _local_backup_public_url(self, object_path: str) -> Optional[str]:
+        if not object_path:
+            return None
+        backup_path = self._local_backup_path(object_path)
+        if not backup_path.exists():
+            return None
+        return f"/uploads/files/{object_path}"
+
+    def _write_local_backup(self, object_path: str, content: bytes) -> None:
+        if not settings.LOCAL_UPLOAD_BACKUP_ENABLED or not object_path:
+            return
+        try:
+            backup_path = self._local_backup_path(object_path)
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            backup_path.write_bytes(content)
+        except Exception as exc:
+            logger.warning("Failed to persist local upload backup for '%s': %s", object_path, exc)
+
+    def put_object(
+        self,
+        object_path: str,
+        content: bytes,
+        content_type: str,
+        upsert: bool = True,
+    ) -> bool:
+        if not object_path or not content:
+            return False
+
+        client = self.supabase
+        if client is None:
+            return False
+        if not self._ensure_bucket_ready():
+            return False
+
+        try:
+            client.storage.from_(SUPABASE_BUCKET).upload(
+                path=object_path,
+                file=content,
+                file_options={
+                    "content-type": content_type or "application/octet-stream",
+                    "upsert": "true" if upsert else "false",
+                },
+            )
+            self._write_local_backup(object_path=object_path, content=content)
+            return True
+        except Exception:
+            return False
+
+    def supabase_object_exists(self, object_path: str) -> bool:
+        if not object_path or not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+            return False
+
+        encoded_path = quote(object_path, safe="/")
+        base_url = settings.SUPABASE_URL.rstrip("/")
+        url = f"{base_url}/storage/v1/object/info/{SUPABASE_BUCKET}/{encoded_path}"
+        req = urllib_request.Request(
+            url,
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
+                "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
+            },
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=6):
+                return True
+        except urllib_error.HTTPError:
+            return False
+        except Exception:
+            return False
+
+    def restore_supabase_from_local_backup(
+        self,
+        object_path: str,
+        content_type: Optional[str] = None,
+    ) -> bool:
+        if not object_path:
+            return False
+
+        backup_path = self._local_backup_path(object_path)
+        if not backup_path.exists():
+            return False
+
+        resolved_content_type = content_type
+        if not resolved_content_type:
+            resolved_content_type = guess_type(backup_path.name)[0] or "application/octet-stream"
+
+        try:
+            content = backup_path.read_bytes()
+        except Exception:
+            return False
+
+        return self.put_object(
+            object_path=object_path,
+            content=content,
+            content_type=resolved_content_type,
+            upsert=True,
+        )
+
+    def restore_local_backup_from_supabase(self, object_path: str) -> bool:
+        if not object_path or self.supabase is None:
+            return False
+
+        try:
+            payload = self.supabase.storage.from_(SUPABASE_BUCKET).download(object_path)
+        except Exception:
+            return False
+
+        if isinstance(payload, (bytes, bytearray)):
+            content = bytes(payload)
+        elif hasattr(payload, "read"):
+            try:
+                content = payload.read()
+            except Exception:
+                return False
+        else:
+            return False
+
+        if not content:
+            return False
+
+        self._write_local_backup(object_path=object_path, content=content)
+        return self.local_backup_exists(object_path)
+
     def upload_user_upload(
         self,
         user_id: UUID,
@@ -128,6 +263,7 @@ class StorageService:
                         content=content,
                         content_type=content_type,
                     )
+                    self._write_local_backup(object_path=object_path, content=content)
                     uri = f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
                     return StoredObject(storage_path=uri, public_url=uri)
                 except Exception as exc:
@@ -138,6 +274,7 @@ class StorageService:
                                 content=content,
                                 content_type=content_type,
                             )
+                            self._write_local_backup(object_path=object_path, content=content)
                             uri = f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
                             return StoredObject(storage_path=uri, public_url=uri)
                         except Exception as retry_exc:
@@ -185,6 +322,11 @@ class StorageService:
                 object_path = unquote(path[len(prefix):].lstrip("/"))
                 if object_path:
                     return f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
+
+        if path.startswith("/uploads/files/"):
+            object_path = unquote(path[len("/uploads/files/"):].lstrip("/"))
+            if object_path:
+                return f"{SUPABASE_UPLOAD_URI_PREFIX}{object_path}"
         return cleaned
 
     def resolve_public_url(self, value: Optional[str], expires_in: int = DEFAULT_SIGNED_URL_EXPIRES) -> Optional[str]:
@@ -200,7 +342,12 @@ class StorageService:
 
         object_path = canonical.removeprefix(SUPABASE_UPLOAD_URI_PREFIX)
         signed = self._create_signed_url(object_path=object_path, expires_in=expires_in)
-        return signed or canonical
+        if signed:
+            return signed
+        backup_url = self._local_backup_public_url(object_path)
+        if backup_url:
+            return backup_url
+        return canonical
 
     def _resolve_local_upload_url(self, value: str, expires_in: int = DEFAULT_SIGNED_URL_EXPIRES) -> Optional[str]:
         """Return local upload URL only when the target file exists.
@@ -222,7 +369,7 @@ class StorageService:
         if not relative:
             return None
 
-        local_path = LOCAL_UPLOAD_ROOT / relative
+        local_path = self._local_backup_path(relative)
         if not local_path.exists():
             signed = self._create_signed_url(object_path=relative, expires_in=expires_in)
             if signed:

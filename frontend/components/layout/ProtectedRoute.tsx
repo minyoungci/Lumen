@@ -17,28 +17,45 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   );
 
   useEffect(() => {
+    const redirectToLogin = () => {
+      const fullPath = `${window.location.pathname || "/"}${window.location.search || ""}`;
+      window.location.replace(`/login?redirect=${encodeURIComponent(fullPath)}`);
+    };
+
     if (bypass) {
       setReady(true);
       return;
     }
 
+    const applySession = (hasSession: boolean) => {
+      if (hasSession) {
+        setReady(true);
+        return;
+      }
+      redirectToLogin();
+    };
+
     const check = async () => {
       try {
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("supabase timeout")), 5000)
-        );
-        const { data } = await Promise.race([sessionPromise, timeoutPromise]);
-        if (!data.session) {
-          window.location.replace("/login");
-          return;
-        }
-        setReady(true);
+        const { data } = await supabase.auth.getSession();
+        applySession(Boolean(data.session));
       } catch {
-        window.location.replace("/login");
+        redirectToLogin();
       }
     };
     void check();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setReady(true);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [bypass]);
 
   if (!ready) {

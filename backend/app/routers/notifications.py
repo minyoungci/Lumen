@@ -12,8 +12,25 @@ from app.dependencies import RequestUser, get_current_user
 from app.models.notification import Notification
 from app.models.user import UserProfile
 from app.schemas.notification import NotificationActor, NotificationOut
+from app.utils.profile import resolve_avatar_url, resolve_member_color
 
 router = APIRouter()
+
+
+def _notification_category(notification_type: str) -> str:
+    if notification_type == "comment_on_post":
+        return "comments"
+    if notification_type == "comment_reply":
+        return "replies"
+    if notification_type == "comment_reaction":
+        return "reactions"
+    if notification_type == "mention":
+        return "mentions"
+    if notification_type.startswith("system_") or notification_type.endswith("_alert"):
+        return "system"
+    if notification_type == "storage_integrity_alert":
+        return "system"
+    return "other"
 
 
 @router.get("", response_model=dict)
@@ -42,7 +59,12 @@ def list_notifications(
 
     actor_ids = list({r.actor_id for r in rows if r.actor_id})
     actors = {
-        u.id: NotificationActor(id=u.id, display_name=u.display_name, avatar_url=u.avatar_url)
+        u.id: NotificationActor(
+            id=u.id,
+            display_name=u.display_name,
+            avatar_url=resolve_avatar_url(u.avatar_url),
+            member_color=resolve_member_color(u.id, u.preferences),
+        )
         for u in db.query(UserProfile).filter(UserProfile.id.in_(actor_ids)).all()
     }
 
@@ -75,6 +97,51 @@ def list_notifications(
             "total": len(data),
         },
         "unread_count": int(unread_count),
+    }
+
+
+@router.get("/summary", response_model=dict)
+def notification_summary(
+    db: Session = Depends(get_db),
+    current_user: RequestUser = Depends(get_current_user),
+):
+    rows = (
+        db.query(Notification.type, Notification.is_read, func.count(Notification.id))
+        .filter(Notification.user_id == current_user.id)
+        .group_by(Notification.type, Notification.is_read)
+        .all()
+    )
+
+    unread_total = 0
+    category_counts = {
+        "comments": 0,
+        "replies": 0,
+        "reactions": 0,
+        "mentions": 0,
+        "system": 0,
+        "other": 0,
+    }
+    by_type: dict[str, dict[str, int]] = {}
+
+    for notif_type, is_read, count in rows:
+        type_key = str(notif_type or "unknown")
+        count_int = int(count or 0)
+        bucket = by_type.setdefault(type_key, {"read": 0, "unread": 0, "total": 0})
+        bucket["total"] += count_int
+        if is_read:
+            bucket["read"] += count_int
+            continue
+        bucket["unread"] += count_int
+        unread_total += count_int
+        category = _notification_category(type_key)
+        category_counts[category] = category_counts.get(category, 0) + count_int
+
+    return {
+        "data": {
+            "unread_total": unread_total,
+            "categories": category_counts,
+            "by_type": by_type,
+        }
     }
 
 
