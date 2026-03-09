@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import RequestUser, get_current_user
 from app.models.content_tag import ContentTag
+from app.models.project import Project
+from app.models.project_member import ProjectMember
 from app.models.schedule import ScheduleEvent
 from app.models.schedule_attendee import ScheduleEventAttendee
 from app.models.tag import Tag
@@ -22,9 +24,26 @@ from app.schemas.schedule import (
     ScheduleRSVPUpdate,
     ScheduleUser,
 )
+from app.utils.profile import resolve_avatar_url
 
 router = APIRouter()
 
+
+def _verify_project_access(db: Session, project_id: UUID, current_user: RequestUser) -> None:
+    project_exists = db.query(Project.id).filter(Project.id == project_id).first()
+    if not project_exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    if current_user.role == "admin":
+        return
+
+    member = (
+        db.query(ProjectMember)
+        .filter(ProjectMember.project_id == project_id, ProjectMember.user_id == current_user.id)
+        .first()
+    )
+    if not member:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this project")
 
 
 def _user_map(db: Session, user_ids: Set[UUID]) -> Dict[UUID, UserProfile]:
@@ -49,7 +68,7 @@ def _build_event_out(db: Session, event: ScheduleEvent) -> ScheduleEventOut:
     creator_payload = ScheduleUser(
         id=event.created_by,
         display_name=creator.display_name if creator else "Unknown",
-        avatar_url=creator.avatar_url if creator else None,
+        avatar_url=resolve_avatar_url(creator.avatar_url) if creator else None,
     )
 
     attendees = []
@@ -59,7 +78,7 @@ def _build_event_out(db: Session, event: ScheduleEvent) -> ScheduleEventOut:
             ScheduleAttendeeOut(
                 id=row.user_id,
                 display_name=u.display_name if u else "Unknown",
-                avatar_url=u.avatar_url if u else None,
+                avatar_url=resolve_avatar_url(u.avatar_url) if u else None,
                 status=row.status,
             )
         )
@@ -99,10 +118,19 @@ def list_schedule_events(
     to_dt: Optional[datetime] = Query(default=None, alias="to"),
     user_id: Optional[UUID] = Query(default=None),
     tag: Optional[str] = Query(default=None),
+    project_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
-    _: RequestUser = Depends(get_current_user),
+    current_user: RequestUser = Depends(get_current_user),
 ):
+    if project_id is not None:
+        _verify_project_access(db, project_id, current_user)
+
     q = db.query(ScheduleEvent)
+
+    if project_id is not None:
+        q = q.filter(ScheduleEvent.project_id == project_id)
+    else:
+        q = q.filter(ScheduleEvent.project_id.is_(None))
 
     if from_dt:
         q = q.filter(ScheduleEvent.end_time >= from_dt)
@@ -131,13 +159,21 @@ def list_schedule_events(
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 def create_schedule_event(
     payload: ScheduleEventCreate,
+    project_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: RequestUser = Depends(get_current_user),
 ):
     if payload.end_time <= payload.start_time:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
-    event = ScheduleEvent(created_by=current_user.id, **payload.model_dump(exclude={"attendee_ids", "tag_ids"}))
+    if project_id is not None:
+        _verify_project_access(db, project_id, current_user)
+
+    event = ScheduleEvent(
+        created_by=current_user.id,
+        project_id=project_id,
+        **payload.model_dump(exclude={"attendee_ids", "tag_ids"}),
+    )
     db.add(event)
     db.commit()
     db.refresh(event)

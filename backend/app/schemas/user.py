@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserStats(BaseModel):
@@ -24,6 +24,7 @@ class UserOut(BaseModel):
     role: str
     is_active: bool
     storage_used: int
+    member_color: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -35,6 +36,7 @@ class UserPublicOut(BaseModel):
     bio: Optional[str] = None
     role: str
     is_active: bool
+    member_color: str
     stats: UserStats
 
 
@@ -47,6 +49,9 @@ class UserMeOut(BaseModel):
     role: str
     is_active: bool
     storage_used: int
+    member_color: str
+    preferences: Dict[str, Any] = Field(default_factory=dict)
+    cache_bust_version: Optional[str] = None
     stats: UserStats
     created_at: Optional[datetime] = None
 
@@ -55,6 +60,7 @@ class UserUpdateMe(BaseModel):
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
     bio: Optional[str] = None
+    preferences: Optional[Dict[str, Any]] = None
 
 
 class UserAdminUpdate(BaseModel):

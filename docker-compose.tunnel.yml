@@ -1,0 +1,104 @@
+version: "2.4"
+
+# ─────────────────────────────────────────────
+# Cloudflare Tunnel 내부 배포 override
+#
+# 사용법:
+#   docker-compose -f docker-compose.yml -f docker-compose.tunnel.yml \
+#     --env-file .env.prod up -d --build
+#
+# 사전 조건:
+#   1. Cloudflare Zero Trust 대시보드 → Networks → Tunnels → 터널 생성
+#   2. Public Hostname 설정:  your-domain.com  →  http://nginx
+#   3. 터널 토큰을 .env.prod 의 CLOUDFLARE_TUNNEL_TOKEN 에 입력
+# ─────────────────────────────────────────────
+
+services:
+
+  postgres:
+    env_file: .env.prod
+
+  backend:
+    volumes:
+      - uploads_data:/var/lib/lumen/uploads
+    env_file: .env.prod
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - KNOWLEDGE_EMBEDDING_PROVIDER=${KNOWLEDGE_EMBEDDING_PROVIDER:-auto}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      - KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE=${KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE:-0.58}
+      - KIMI_API_KEY=${KIMI_API_KEY}
+      - KIMI_BASE_URL=${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
+      - KIMI_EMBEDDING_MODEL=${KIMI_EMBEDDING_MODEL:-text-embedding-v1}
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_ORIGINS=https://${DOMAIN}
+      - DEV_BYPASS_AUTH=false
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+
+  celery-worker:
+    env_file: .env.prod
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - KNOWLEDGE_EMBEDDING_PROVIDER=${KNOWLEDGE_EMBEDDING_PROVIDER:-auto}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      - KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE=${KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE:-0.58}
+      - KIMI_API_KEY=${KIMI_API_KEY}
+      - KIMI_BASE_URL=${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
+      - KIMI_EMBEDDING_MODEL=${KIMI_EMBEDDING_MODEL:-text-embedding-v1}
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=${SECRET_KEY}
+
+  celery-beat:
+    env_file: .env.prod
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - KNOWLEDGE_EMBEDDING_PROVIDER=${KNOWLEDGE_EMBEDDING_PROVIDER:-auto}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      - KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE=${KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE:-0.58}
+      - KIMI_API_KEY=${KIMI_API_KEY}
+      - KIMI_BASE_URL=${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
+      - KIMI_EMBEDDING_MODEL=${KIMI_EMBEDDING_MODEL:-text-embedding-v1}
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=${SECRET_KEY}
+
+  frontend:
+    # docker-compose v1 does not clear parent volumes with volumes:[]; bind mount
+    # ./frontend:/app still applies, wiping the container's built .next at runtime.
+    # Fix: rebuild inside the container on startup so NEXT_PUBLIC_* vars are also
+    # correctly baked in (Dockerfile build runs without production env vars).
+    user: root
+    env_file: .env.prod
+    environment:
+      - NEXT_PUBLIC_API_URL=https://${DOMAIN}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - NEXT_PUBLIC_DEV_BYPASS_AUTH=false
+    command: sh -c "npm run build && npm start"
+
+  nginx:
+    ports: []   # 외부 포트 노출 없음 — cloudflared 가 Docker 내부망으로 접근
+    volumes:
+      - ./nginx.tunnel.conf:/etc/nginx/nginx.conf
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    # 방법 B (커스텀 도메인)
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    restart: unless-stopped

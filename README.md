@@ -1,4 +1,4 @@
-# LabBase (LearnableCat)
+# Lumen (LearnableCat)
 
 Research knowledge base platform (Next.js + FastAPI + Postgres + Redis + Celery).
 
@@ -7,7 +7,7 @@ Research knowledge base platform (Next.js + FastAPI + Postgres + Redis + Celery)
 ### 1) Start
 
 ```bash
-cd D:/learnablecat/labbase
+cd D:/learnablecat/lumen
 bash scripts/option_a_up.sh
 ```
 
@@ -38,11 +38,11 @@ bash scripts/auth_strict_check.sh
 
 ## Dev Notes
 
-- Frontend dev bypass auth is enabled by default:
-  - `NEXT_PUBLIC_DEV_BYPASS_AUTH=true`
-- Backend still uses temporary dev auth bridge for local testing.
+- Dev bypass auth is disabled by default:
+  - `NEXT_PUBLIC_DEV_BYPASS_AUTH=false`
+  - `DEV_BYPASS_AUTH=false`
+- Backend supports a temporary dev auth bridge only when `DEV_BYPASS_AUTH=true`.
 - Production hardening needed:
-  - Supabase JWT verification
   - RLS policies
   - Storage real integration
   - AI summary real worker flow

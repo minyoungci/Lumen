@@ -2,9 +2,9 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 interface SidebarStore {
-  isOpen: boolean;        // 모바일 드로어
-  isCollapsed: boolean;   // 데스크탑 사이드바 접힘
-  isActivityOpen: boolean; // 활동 피드 패널
+  isOpen: boolean;
+  isCollapsed: boolean;
+  isActivityOpen: boolean;
   open: () => void;
   close: () => void;
   toggle: () => void;
@@ -17,13 +17,13 @@ export const useSidebarStore = create<SidebarStore>()(
     (set) => ({
       isOpen: false,
       isCollapsed: false,
-      isActivityOpen: true,
+      isActivityOpen: false,
       open: () => set({ isOpen: true }),
       close: () => set({ isOpen: false }),
       toggle: () => set((state) => ({ isOpen: !state.isOpen })),
       toggleCollapse: () => set((state) => ({ isCollapsed: !state.isCollapsed })),
       toggleActivity: () => set((state) => ({ isActivityOpen: !state.isActivityOpen })),
     }),
-    { name: "labbase-sidebar" }
+    { name: "lumen-sidebar", skipHydration: true }
   )
 );

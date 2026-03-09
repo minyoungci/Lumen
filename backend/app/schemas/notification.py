@@ -11,6 +11,7 @@ class NotificationActor(BaseModel):
     id: UUID
     display_name: str
     avatar_url: Optional[str] = None
+    member_color: Optional[str] = None
 
 
 class NotificationOut(BaseModel):

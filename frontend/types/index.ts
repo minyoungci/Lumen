@@ -3,6 +3,9 @@ export interface User {
   email?: string;
   display_name: string;
   avatar_url?: string | null;
+  bio?: string | null;
+  member_color?: string | null;
+  preferences?: Record<string, unknown>;
   role: "admin" | "member";
   is_active?: boolean;
 }
@@ -40,8 +43,18 @@ export interface Tag {
 
 export interface Comment {
   id: string;
-  user_id: string;
   body: Record<string, unknown>;
+  parent_id?: string | null;
+  is_edited?: boolean;
+  reactions_total?: number;
+  reactions?: Array<{ emoji: string; count: number; reacted?: boolean }>;
+  author?: {
+    id: string;
+    display_name: string;
+    avatar_url?: string | null;
+    member_color?: string | null;
+  };
+  replies?: Comment[];
 }
 
 export interface Notification {
@@ -49,7 +62,15 @@ export interface Notification {
   type: string;
   title: string;
   body?: string;
+  link?: string;
   is_read: boolean;
+  actor?: {
+    id: string;
+    display_name: string;
+    avatar_url?: string | null;
+    member_color?: string | null;
+  };
+  created_at?: string;
 }
 
 export interface ScheduleEvent {

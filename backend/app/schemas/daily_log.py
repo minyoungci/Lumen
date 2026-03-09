@@ -32,6 +32,7 @@ class DailyLogOut(BaseModel):
 class DailyLogListItem(BaseModel):
     id: UUID
     log_date: date
+    title: Optional[str] = None
     word_count: int
     status: str = "draft"
     preview: str

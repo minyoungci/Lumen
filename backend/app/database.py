@@ -35,6 +35,7 @@ from app.models.post_read_status import PostReadStatus
 from app.models.tag import Tag
 from app.models.content_tag import ContentTag
 from app.models.comment import Comment
+from app.models.comment_reaction import CommentReaction
 from app.models.mention import Mention
 from app.models.notification import Notification
 from app.models.schedule import ScheduleEvent
@@ -42,3 +43,12 @@ from app.models.schedule_attendee import ScheduleEventAttendee
 from app.models.upload import Upload
 from app.models.bookmark import Bookmark
 from app.models.kanban_column import KanbanColumn
+from app.models.project import Project
+from app.models.project_member import ProjectMember
+from app.models.project_invite_code import ProjectInviteCode
+from app.models.site_setting import SiteSetting
+from app.models.knowledge_document import KnowledgeDocument
+from app.models.knowledge_chunk import KnowledgeChunk
+from app.models.knowledge_link import KnowledgeLink
+from app.models.knowledge_index_job import KnowledgeIndexJob
+from app.models.knowledge_feedback import KnowledgeFeedback

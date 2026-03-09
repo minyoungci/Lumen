@@ -31,6 +31,13 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - KNOWLEDGE_EMBEDDING_PROVIDER=${KNOWLEDGE_EMBEDDING_PROVIDER:-auto}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      - KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE=${KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE:-0.58}
+      - KIMI_API_KEY=${KIMI_API_KEY}
+      - KIMI_BASE_URL=${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
+      - KIMI_EMBEDDING_MODEL=${KIMI_EMBEDDING_MODEL:-text-embedding-v1}
       - REDIS_URL=redis://redis:6379
       - SECRET_KEY=${SECRET_KEY}
       - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3100,http://172.24.105.231:3000,http://172.24.105.231:3100
@@ -42,20 +49,30 @@ services:
         condition: service_started
     volumes:
       - ./backend:/app
+      - uploads_data:/var/lib/lumen/uploads
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   celery-worker:
     build: ./backend
-    command: celery -A app.celery_config.celery_app worker --loglevel=info -Q ai_tasks
+    command: celery -A app.celery_config.celery_app worker --loglevel=info -Q ai_tasks,maintenance_tasks
     depends_on:
       - redis
       - backend
+    volumes:
+      - uploads_data:/var/lib/lumen/uploads
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - KNOWLEDGE_EMBEDDING_PROVIDER=${KNOWLEDGE_EMBEDDING_PROVIDER:-auto}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      - KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE=${KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE:-0.58}
+      - KIMI_API_KEY=${KIMI_API_KEY}
+      - KIMI_BASE_URL=${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
+      - KIMI_EMBEDDING_MODEL=${KIMI_EMBEDDING_MODEL:-text-embedding-v1}
       - REDIS_URL=redis://redis:6379
       - SECRET_KEY=${SECRET_KEY}
 
@@ -68,11 +85,19 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - KNOWLEDGE_EMBEDDING_PROVIDER=${KNOWLEDGE_EMBEDDING_PROVIDER:-auto}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      - KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE=${KNOWLEDGE_SEMANTIC_LINK_MIN_SCORE:-0.58}
+      - KIMI_API_KEY=${KIMI_API_KEY}
+      - KIMI_BASE_URL=${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
+      - KIMI_EMBEDDING_MODEL=${KIMI_EMBEDDING_MODEL:-text-embedding-v1}
       - REDIS_URL=redis://redis:6379
       - SECRET_KEY=${SECRET_KEY}
 
   frontend:
     build: ./frontend
+    user: root
     ports:
       - "3100:3000"
     environment:
@@ -85,6 +110,8 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - /app/.next
+    command: sh -c "npm run build && npm start"
 
   nginx:
     image: nginx:alpine
@@ -98,3 +125,4 @@ services:
 
 volumes:
   postgres_data:
+  uploads_data:

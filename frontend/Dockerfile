@@ -5,9 +5,8 @@ RUN npm ci
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs && \
-    chown -R nextjs:nodejs /app
+RUN addgroup -S -g 1001 nodejs && \
+    adduser -S -D -H -u 1001 -G nodejs nextjs
 EXPOSE 3000
 USER nextjs
 CMD ["npm", "start"]

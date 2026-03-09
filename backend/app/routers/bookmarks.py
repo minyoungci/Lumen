@@ -14,6 +14,7 @@ from app.models.research_note import ResearchNote
 from app.models.shared_post import SharedPost
 from app.models.user import UserProfile
 from app.schemas.bookmark import BookmarkCreate, BookmarkOut
+from app.utils.profile import resolve_avatar_url
 
 router = APIRouter()
 
@@ -38,7 +39,11 @@ def _to_content_payload(db: Session, content_type: str, row):
     if hasattr(row, "user_id") and row.user_id:
         u = db.query(UserProfile).filter(UserProfile.id == row.user_id).first()
         if u:
-            author = {"id": u.id, "display_name": u.display_name, "avatar_url": u.avatar_url}
+            author = {
+                "id": u.id,
+                "display_name": u.display_name,
+                "avatar_url": resolve_avatar_url(u.avatar_url),
+            }
 
     if content_type == "research_note":
         return {

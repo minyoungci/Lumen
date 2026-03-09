@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserProfileOut(BaseModel):
@@ -17,5 +17,7 @@ class UserProfileOut(BaseModel):
     role: str
     is_active: bool
     storage_used: int
+    member_color: str
+    preferences: Dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
